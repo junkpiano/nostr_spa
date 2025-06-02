@@ -6,7 +6,11 @@ const output = document.getElementById("nostr-output");
 const profileSection = document.getElementById("profile-section");
 const loadMoreBtn = document.getElementById("load-more");
 const connectingMsg = document.getElementById("connecting-msg");
-const relays = ["wss://nos.lol", "wss://relay.nostr.band", "wss://relay.damus.io"];
+const relays = ["wss://nos.lol",
+                "wss://relay.nostr.band",
+                "wss://relay.damus.io",
+                "wss://nostr.wine",
+                "wss://relay.snort.social"];
 const limit = 100;
 let seenEventIds = new Set();
 let untilTimestamp = Math.floor(Date.now() / 1000);
