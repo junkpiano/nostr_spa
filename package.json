@@ -2,13 +2,19 @@
     "name": "nostr-spa",
     "version": "1.0.0",
     "description": "Simple Nostr SPA with Express",
-    "main": "server.js",
+    "main": "dist/server.js",
     "type": "module",
     "scripts": {
-      "start": "node server.js"
+        "build": "tsc && cp src/index.html dist/ && mkdir -p dist/js && cp dist/src/*.js dist/js/ && rm -rf dist/src dist/types",
+        "start": "npm run build && node dist/server.js",
+        "dev": "tsc --watch & nodemon dist/server.js"
     },
     "dependencies": {
-      "express": "^4.19.2"
+        "express": "^4.19.2"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.6",
+        "@types/node": "^25.0.9",
+        "typescript": "^5.9.3"
     }
-  }
-  
+}

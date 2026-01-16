@@ -6,8 +6,8 @@ const port = process.env.PORT || 3000;
 // Path helpers
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Serve static files from /dist
-app.use(express.static(path.join(__dirname, "dist")));
+// Serve static files from the current directory (where the compiled files are)
+app.use(express.static(__dirname));
 // OGP Fetch Endpoint
 app.get("/api/ogp", async (req, res) => {
     const { url } = req.query;
@@ -39,7 +39,7 @@ app.get("/api/ogp", async (req, res) => {
 });
 // SPA fallback: always return index.html for any unknown routes
 app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
+    res.sendFile(path.join(__dirname, "index.html"));
 });
 // Start server
 app.listen(port, () => {

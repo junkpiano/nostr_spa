@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nostr Profile Viewer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 text-gray-900">
+  <header class="bg-gradient-to-r from-blue-500 to-purple-600 text-white py-8 text-center shadow">
+    <h1 class="text-2xl sm:text-4xl font-bold">Nostr Profile Viewer</h1>
+  </header>
+
+  <main class="w-full max-w-3xl mx-auto mt-6 sm:mt-10 px-4 sm:px-6 lg:px-8">
+    <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md">
+      <div id="profile-section" class="mb-6 text-center space-y-2">
+        <!-- User profile will appear here -->
+      </div>
+
+      <h2 id="posts-header" class="text-xl sm:text-2xl font-semibold mb-4" style="display: none;">Posts:</h2>
+      <div id="nostr-output" class="space-y-4 text-sm font-mono overflow-x-auto">
+      </div>
+
+      <div class="mt-6 text-center">
+        <button id="load-more" style="display: none;"
+          class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded w-full sm:w-auto">
+          Load More
+        </button>
+        <p id="connecting-msg" style="display: none;">Connecting to relays...</p>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="./js/app.js"></script>
+</body>
+
+</html>

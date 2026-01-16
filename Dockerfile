@@ -4,15 +4,23 @@ FROM node:20-slim
 # Create app directory
 WORKDIR /app
 
-# Install app dependencies
-COPY package.json ./
-RUN npm install
+# Copy package files
+COPY package*.json ./
 
-# Copy the app source
+# Install all dependencies (including dev dependencies for building)
+RUN npm ci
+
+# Copy source code
 COPY . .
+
+# Build TypeScript to JavaScript
+RUN npm run build
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --production
 
 # Expose port
 EXPOSE 3000
 
-# Start the app
-CMD ["npm", "start"]
+# Start the compiled app directly (skip npm start which would rebuild)
+CMD ["node", "dist/server.js"]
