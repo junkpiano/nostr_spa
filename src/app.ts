@@ -1,7 +1,7 @@
-import { nip19 } from "https://esm.sh/nostr-tools";
+import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
 import { fetchProfile, renderProfile } from "./profile.js";
 import { loadEvents } from "./events.js";
-import { NostrProfile, PubkeyHex, Npub } from "../types/nostr.js";
+import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr.js";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
 const profileSection: HTMLElement | null = document.getElementById("profile-section");
