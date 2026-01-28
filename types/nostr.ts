@@ -58,8 +58,24 @@ export type Npub = string;
 export type EventId = string;
 
 // API response types
-export interface OGPData {
-  [key: string]: string;
+export interface OGPMetadata {
+  [key: string]: string | undefined;
+  title?: string;
+  description?: string;
+  "og:title"?: string;
+  "og:description"?: string;
+  "og:image"?: string;
+  "og:url"?: string;
+  "og:type"?: string;
+  "og:site_name"?: string;
+  "twitter:card"?: string;
+  "twitter:image"?: string;
+  "twitter:site"?: string;
+}
+
+export interface OGPResponse {
+  url: string;
+  data: OGPMetadata;
 }
 
 export interface APIError {

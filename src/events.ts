@@ -1,6 +1,6 @@
-import { nip19 } from "https://esm.sh/nostr-tools";
-import { getAvatarURL, getDisplayName } from "./utils.js";
-import { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../types/nostr.js";
+import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
+import { getAvatarURL, getDisplayName, fetchOGP } from "./utils.js";
+import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../types/nostr.js";
 
 export async function loadEvents(
     pubkeyHex: PubkeyHex,
@@ -101,12 +101,15 @@ export function renderEvent(event: NostrEvent, profile: NostrProfile | null, npu
     const name: string = getDisplayName(npub, profile);
     const createdAt: string = new Date(event.created_at * 1000).toLocaleString();
 
+    // Extract URLs for OGP fetching
+    const urls: string[] = [];
     const contentWithLinks: string = event.content.replace(
         /(https?:\/\/[^\s]+)/g,
         (url: string): string => {
             if (url.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i)) {
                 return `<img src="${url}" alt="Image" class="my-2 max-w-full rounded shadow" loading="lazy" />`;
             } else {
+                urls.push(url);
                 return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">${url}</a>`;
             }
         }
@@ -121,9 +124,47 @@ export function renderEvent(event: NostrEvent, profile: NostrProfile | null, npu
       <div class="flex-1 overflow-hidden">
         <div class="font-semibold text-gray-800 text-sm mb-1">👤 ${name}</div>
         <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
+        <div class="ogp-container"></div>
         <div class="text-xs text-gray-500">🕒 ${createdAt}</div>
       </div>
     </div>
   `;
     output.appendChild(div);
+
+    // Fetch and render OGP cards for non-image URLs
+    if (urls.length > 0) {
+        const ogpContainer: HTMLElement | null = div.querySelector(".ogp-container");
+        if (ogpContainer) {
+            urls.forEach(async (url: string): Promise<void> => {
+                const ogpData: OGPResponse | null = await fetchOGP(url);
+                if (ogpData && ogpData.data) {
+                    renderOGPCard(ogpData, ogpContainer);
+                }
+            });
+        }
+    }
+}
+
+function renderOGPCard(ogpData: OGPResponse, container: HTMLElement): void {
+    const title: string = ogpData.data["og:title"] || ogpData.data.title || "No title";
+    const description: string = ogpData.data["og:description"] || ogpData.data.description || "";
+    const image: string | undefined = ogpData.data["og:image"];
+    const siteName: string = ogpData.data["og:site_name"] || "";
+    const url: string = ogpData.url;
+
+    const card: HTMLDivElement = document.createElement("div");
+    card.className = "border border-gray-300 rounded-lg overflow-hidden my-2 hover:shadow-md transition-shadow bg-white";
+
+    card.innerHTML = `
+        <a href="${url}" target="_blank" rel="noopener noreferrer" class="block no-underline">
+            ${image ? `<img src="${image}" alt="${title}" class="w-full h-48 object-cover" loading="lazy" onerror="this.style.display='none';" />` : ''}
+            <div class="p-3">
+                ${siteName ? `<div class="text-xs text-gray-500 mb-1">${siteName}</div>` : ''}
+                <div class="font-semibold text-gray-900 text-sm mb-1 line-clamp-2">${title}</div>
+                ${description ? `<div class="text-xs text-gray-600 line-clamp-2">${description}</div>` : ''}
+            </div>
+        </a>
+    `;
+
+    container.appendChild(card);
 }
