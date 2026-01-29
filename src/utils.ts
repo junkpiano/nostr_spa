@@ -1,4 +1,4 @@
-import type { NostrProfile, PubkeyHex, Npub, OGPResponse } from "../types/nostr.js";
+import type { NostrProfile, PubkeyHex, Npub, OGPResponse } from "../types/nostr";
 
 export function shortenNpub(npub: Npub): string {
     return npub.slice(0, 12) + "...";

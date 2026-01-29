@@ -1,6 +1,6 @@
 import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
-import { getAvatarURL, getDisplayName, fetchOGP } from "./utils.js";
-import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../types/nostr.js";
+import { getAvatarURL, getDisplayName, fetchOGP } from "./utils";
+import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../types/nostr";
 
 export async function loadEvents(
     pubkeyHex: PubkeyHex,

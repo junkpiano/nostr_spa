@@ -1,5 +1,5 @@
-import { getAvatarURL, getDisplayName } from "./utils.js";
-import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr.js";
+import { getAvatarURL, getDisplayName } from "./utils";
+import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
 export async function fetchProfile(pubkeyHex: PubkeyHex, relays: string[]): Promise<NostrProfile | null> {
     let profile: NostrProfile | null = null;
