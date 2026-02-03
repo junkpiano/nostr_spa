@@ -8,6 +8,97 @@ const profileCache: Map<PubkeyHex, NostrProfile | null> = new Map();
 // Track which profiles are currently being fetched
 const fetchingProfiles: Set<PubkeyHex> = new Set();
 
+/**
+ * Fetches the follow list (kind 3 event) for a given user
+ * @param pubkeyHex - The hex public key of the user
+ * @param relays - Array of relay URLs to query
+ * @returns Promise resolving to array of followed pubkeys (hex format)
+ */
+export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): Promise<PubkeyHex[]> {
+    const followedPubkeys: Set<PubkeyHex> = new Set();
+    console.log(`Fetching follow list for ${pubkeyHex}`);
+
+    // Use only first 3 relays for faster follow list fetching
+    const fastRelays = relays.slice(0, 3);
+    let resolved = false;
+
+    // Create a promise that resolves as soon as we get a non-empty follow list
+    const racePromise = new Promise<void>((resolveRace) => {
+        const promises = fastRelays.map(async (relayUrl: string): Promise<void> => {
+            try {
+                const socket: WebSocket = new WebSocket(relayUrl);
+                await new Promise<void>((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        socket.close();
+                        reject(new Error("Timeout"));
+                    }, 5000); // Reduced timeout to 5 seconds
+
+                    socket.onopen = (): void => {
+                        const subId: string = "follows-" + Math.random().toString(36).slice(2);
+                        const req: [string, string, { kinds: number[]; authors: string[]; limit: number }] = [
+                            "REQ",
+                            subId,
+                            { kinds: [3], authors: [pubkeyHex], limit: 1 }
+                        ];
+                        console.log(`Requesting follows from ${relayUrl}`);
+                        socket.send(JSON.stringify(req));
+                    };
+
+                    socket.onmessage = (msg: MessageEvent): void => {
+                        const arr: any[] = JSON.parse(msg.data);
+                        if (arr[0] === "EVENT" && arr[2]?.kind === 3) {
+                            const event: NostrEvent = arr[2];
+                            console.log(`Got kind 3 event from ${relayUrl} with ${event.tags.length} tags`);
+                            // Extract followed pubkeys from tags
+                            event.tags.forEach((tag: string[]): void => {
+                                if (tag[0] === "p" && tag[1]) {
+                                    followedPubkeys.add(tag[1]);
+                                }
+                            });
+                            clearTimeout(timeout);
+                            socket.close();
+                            resolve();
+
+                            // If we got a non-empty follow list and haven't resolved yet, resolve the race
+                            if (followedPubkeys.size > 0 && !resolved) {
+                                resolved = true;
+                                resolveRace();
+                            }
+                        } else if (arr[0] === "EOSE") {
+                            console.log(`EOSE from ${relayUrl}, found ${followedPubkeys.size} follows so far`);
+                            clearTimeout(timeout);
+                            socket.close();
+                            resolve();
+                        }
+                    };
+
+                    socket.onerror = (err: Event): void => {
+                        clearTimeout(timeout);
+                        console.error(`WebSocket error [${relayUrl}]`, err);
+                        reject(err);
+                    };
+                });
+            } catch (e) {
+                console.warn(`Failed to fetch follows from ${relayUrl}:`, e);
+            }
+        });
+
+        // Also resolve after all promises settle, in case we never got follows
+        Promise.allSettled(promises).then(() => {
+            if (!resolved) {
+                resolved = true;
+                resolveRace();
+            }
+        });
+    });
+
+    // Wait for either first non-empty response or all to complete
+    await racePromise;
+
+    console.log(`Total follows found: ${followedPubkeys.size}`);
+    return Array.from(followedPubkeys);
+}
+
 export async function loadEvents(
     pubkeyHex: PubkeyHex,
     profile: NostrProfile | null,
@@ -200,9 +291,10 @@ export async function loadGlobalTimeline(
     untilTimestamp: number,
     seenEventIds: Set<string>,
     output: HTMLElement,
-    connectingMsg: HTMLElement | null
+    connectingMsg: HTMLElement | null,
+    activeWebSockets: WebSocket[] = [],
+    activeTimeouts: number[] = []
 ): Promise<void> {
-    let anyEventLoaded: boolean = false;
     const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
 
     if (connectingMsg) {
@@ -216,6 +308,7 @@ export async function loadGlobalTimeline(
 
     for (const relayUrl of relays) {
         const socket: WebSocket = new WebSocket(relayUrl);
+        activeWebSockets.push(socket);
 
         socket.onopen = (): void => {
             const subId: string = 'global-' + Math.random().toString(36).slice(2);
@@ -278,7 +371,6 @@ export async function loadGlobalTimeline(
                 const npubStr: Npub = nip19.npubEncode(event.pubkey);
                 renderEvent(event, profile, npubStr, event.pubkey, output);
                 untilTimestamp = Math.min(untilTimestamp, event.created_at);
-                anyEventLoaded = true;
             } else if (arr[0] === "EOSE") {
                 socket.close();
             }
@@ -296,11 +388,11 @@ export async function loadGlobalTimeline(
         };
     }
 
-    setTimeout((): void => {
-        if (!anyEventLoaded && !output.querySelector("div")) {
-            if(seenEventIds.size === 0) {
-                output.innerHTML = "<p class='text-red-500'>No events found on global timeline.</p>";
-            }
+    const timeoutId = window.setTimeout((): void => {
+        // Only show error if no events exist in the DOM and seenEventIds is still empty
+        const hasEvents = output.querySelectorAll('.event-container').length > 0;
+        if (!hasEvents && seenEventIds.size === 0) {
+            output.innerHTML = "<p class='text-red-500'>No events found on global timeline.</p>";
         }
 
         if (connectingMsg) {
@@ -310,14 +402,167 @@ export async function loadGlobalTimeline(
         if (loadMoreBtn) {
             (loadMoreBtn as HTMLButtonElement).disabled = false;
             loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
-            loadMoreBtn.style.display = "inline";
+            // Only show load more button if we have events
+            if (hasEvents || seenEventIds.size > 0) {
+                loadMoreBtn.style.display = "inline";
+            }
         }
-    }, 3000);
+    }, 5000); // Increased to 5 seconds to give more time for events to load
+    activeTimeouts.push(timeoutId);
 
     if (loadMoreBtn) {
         // Remove old listeners and add new one
         const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
         loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
         newLoadMoreBtn.addEventListener("click", (): Promise<void> => loadGlobalTimeline(relays, limit, untilTimestamp, seenEventIds, output, connectingMsg));
+    }
+}
+
+export async function loadHomeTimeline(
+    followedPubkeys: PubkeyHex[],
+    relays: string[],
+    limit: number,
+    untilTimestamp: number,
+    seenEventIds: Set<string>,
+    output: HTMLElement,
+    connectingMsg: HTMLElement | null,
+    activeWebSockets: WebSocket[] = [],
+    activeTimeouts: number[] = []
+): Promise<void> {
+    if (followedPubkeys.length === 0) {
+        if (output) {
+            output.innerHTML = `
+                <div class="text-center py-8">
+                    <p class="text-gray-700 mb-4">You don't follow anyone yet.</p>
+                    <p class="text-gray-600 text-sm mb-4">To see posts here, follow people on Nostr using your favorite client.</p>
+                    <a href="/" class="inline-block bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-lg">
+                        View Global Timeline
+                    </a>
+                </div>
+            `;
+        }
+        return;
+    }
+
+    const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
+
+    if (connectingMsg) {
+        connectingMsg.style.display = ""; // Show connecting message
+    }
+
+    if (loadMoreBtn) {
+        (loadMoreBtn as HTMLButtonElement).disabled = true;
+        loadMoreBtn.classList.add("opacity-50", "cursor-not-allowed");
+    }
+
+    for (const relayUrl of relays) {
+        const socket: WebSocket = new WebSocket(relayUrl);
+        activeWebSockets.push(socket);
+
+        socket.onopen = (): void => {
+            const subId: string = 'home-' + Math.random().toString(36).slice(2);
+            const req: [string, string, { kinds: number[]; authors: string[]; until: number; limit: number }] = [
+                "REQ", subId,
+                {
+                    kinds: [1],
+                    authors: followedPubkeys,
+                    until: untilTimestamp,
+                    limit: limit
+                }
+            ];
+            socket.send(JSON.stringify(req));
+        };
+
+        socket.onmessage = async (msg: MessageEvent): Promise<void> => {
+            const arr: any[] = JSON.parse(msg.data);
+            if (arr[0] === "EVENT") {
+                const event: NostrEvent = arr[2];
+                if (seenEventIds.has(event.id)) return;
+                seenEventIds.add(event.id);
+
+                if (connectingMsg) {
+                    connectingMsg.style.display = "none";
+                }
+
+                // Fetch profile for this event's author if not cached
+                let profile: NostrProfile | null = profileCache.get(event.pubkey) || null;
+                if (!profileCache.has(event.pubkey) && !fetchingProfiles.has(event.pubkey)) {
+                    // Mark as being fetched to avoid duplicate requests
+                    fetchingProfiles.add(event.pubkey);
+                    // Fetch profile asynchronously
+                    fetchProfile(event.pubkey, relays).then((fetchedProfile: NostrProfile | null): void => {
+                        profileCache.set(event.pubkey, fetchedProfile);
+                        fetchingProfiles.delete(event.pubkey);
+                        // Update the rendered event with the fetched profile
+                        const eventElements: NodeListOf<Element> = output.querySelectorAll('.event-container');
+                        eventElements.forEach((el: Element): void => {
+                            if ((el as HTMLElement).dataset.pubkey === event.pubkey) {
+                                const nameEl: Element | null = el.querySelector('.event-username');
+                                const avatarEl: Element | null = el.querySelector('.event-avatar');
+                                if (fetchedProfile) {
+                                    if (nameEl) {
+                                        const npubStr: Npub = nip19.npubEncode(event.pubkey);
+                                        nameEl.textContent = `👤 ${getDisplayName(npubStr, fetchedProfile)}`;
+                                    }
+                                    if (avatarEl) {
+                                        (avatarEl as HTMLImageElement).src = getAvatarURL(event.pubkey, fetchedProfile);
+                                    }
+                                }
+                            }
+                        });
+                    }).catch((err: any): void => {
+                        console.error(`Failed to fetch profile for ${event.pubkey}`, err);
+                        profileCache.set(event.pubkey, null);
+                        fetchingProfiles.delete(event.pubkey);
+                    });
+                }
+
+                const npubStr: Npub = nip19.npubEncode(event.pubkey);
+                renderEvent(event, profile, npubStr, event.pubkey, output);
+                untilTimestamp = Math.min(untilTimestamp, event.created_at);
+            } else if (arr[0] === "EOSE") {
+                socket.close();
+            }
+        };
+
+        socket.onerror = (err: Event): void => {
+            console.error(`WebSocket error [${relayUrl}]`, err);
+            if (connectingMsg) {
+                connectingMsg.style.display = "none";
+            }
+            if (loadMoreBtn) {
+                (loadMoreBtn as HTMLButtonElement).disabled = false;
+                loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+            }
+        };
+    }
+
+    const timeoutId = window.setTimeout((): void => {
+        // Only show error if no events exist in the DOM and seenEventIds is still empty
+        const hasEvents = output.querySelectorAll('.event-container').length > 0;
+        if (!hasEvents && seenEventIds.size === 0) {
+            output.innerHTML = "<p class='text-red-500'>No posts found from people you follow.</p>";
+        }
+
+        if (connectingMsg) {
+            connectingMsg.style.display = "none";
+        }
+
+        if (loadMoreBtn) {
+            (loadMoreBtn as HTMLButtonElement).disabled = false;
+            loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+            // Only show load more button if we have events
+            if (hasEvents || seenEventIds.size > 0) {
+                loadMoreBtn.style.display = "inline";
+            }
+        }
+    }, 5000); // Increased to 5 seconds to give more time for events to load
+    activeTimeouts.push(timeoutId);
+
+    if (loadMoreBtn) {
+        // Remove old listeners and add new one
+        const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
+        loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
+        newLoadMoreBtn.addEventListener("click", (): Promise<void> => loadHomeTimeline(followedPubkeys, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg));
     }
 }

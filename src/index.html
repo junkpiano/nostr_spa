@@ -14,8 +14,26 @@
 
   <main class="w-full max-w-7xl mx-auto mt-6 sm:mt-10 px-4 sm:px-6 lg:px-8">
     <div class="flex flex-col lg:flex-row gap-6">
+      <!-- Left sidebar navigation -->
+      <aside class="lg:w-48 w-full">
+        <div class="bg-white p-4 rounded-lg shadow-md sticky top-6 space-y-2">
+          <button id="nav-home" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-gray-700 flex items-center gap-2">
+            <span>🏠</span>
+            <span>Home</span>
+          </button>
+          <button id="nav-global" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-gray-700 flex items-center gap-2">
+            <span>🌍</span>
+            <span>Global</span>
+          </button>
+          <button id="nav-logout" style="display: none;" class="w-full text-left px-4 py-3 rounded-lg hover:bg-red-100 transition-colors font-semibold text-red-600 flex items-center gap-2 border-t border-gray-200 mt-2 pt-4">
+            <span>🚪</span>
+            <span>Logout</span>
+          </button>
+        </div>
+      </aside>
+
       <!-- Main content column -->
-      <div class="flex-1 lg:max-w-3xl">
+      <div class="flex-1 lg:max-w-2xl">
         <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md">
           <div id="profile-section" class="mb-6 text-center space-y-2">
             <!-- User profile will appear here -->
@@ -38,23 +56,26 @@
       <!-- Right sidebar column -->
       <aside class="lg:w-80 w-full">
         <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md sticky top-6">
-          <h3 class="text-xl sm:text-2xl font-semibold mb-4 text-gray-900">Search Posts</h3>
-          <div class="space-y-3">
-            <input id="search-input" type="text" placeholder="Search for words in posts..."
-              class="border border-gray-300 rounded-lg px-4 py-2 w-full text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <button id="search-button"
-              class="bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow-lg">
-              Search
-            </button>
-            <button id="clear-search-button"
-              class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow"
-              style="display: none;">
-              Clear Search
-            </button>
+          <!-- Search Section -->
+          <div>
+            <h3 class="text-xl sm:text-2xl font-semibold mb-4 text-gray-900">Search Posts</h3>
+            <div class="space-y-3">
+              <input id="search-input" type="text" placeholder="Search for words in posts..."
+                class="border border-gray-300 rounded-lg px-4 py-2 w-full text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <button id="search-button"
+                class="bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow-lg">
+                Search
+              </button>
+              <button id="clear-search-button"
+                class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow"
+                style="display: none;">
+                Clear Search
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-3">
+              Search through post content for specific words or phrases.
+            </p>
           </div>
-          <p class="text-xs text-gray-500 mt-3">
-            Search through post content for specific words or phrases.
-          </p>
         </div>
       </aside>
     </div>
