@@ -4,31 +4,59 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Nostr Profile Viewer</title>
+  <title>noxtr</title>
 </head>
 
 <body class="bg-gray-100 text-gray-900">
-  <header class="bg-gradient-to-r from-blue-500 to-purple-600 text-white py-8 text-center shadow">
-    <h1 class="text-2xl sm:text-4xl font-bold">Nostr Profile Viewer</h1>
+  <header class="bg-gradient-to-r from-slate-900 via-indigo-900 to-purple-950 text-white py-8 text-center shadow-xl">
+    <h1 class="text-2xl sm:text-4xl font-bold">noxtr</h1>
   </header>
 
-  <main class="w-full max-w-3xl mx-auto mt-6 sm:mt-10 px-4 sm:px-6 lg:px-8">
-    <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md">
-      <div id="profile-section" class="mb-6 text-center space-y-2">
-        <!-- User profile will appear here -->
+  <main class="w-full max-w-7xl mx-auto mt-6 sm:mt-10 px-4 sm:px-6 lg:px-8">
+    <div class="flex flex-col lg:flex-row gap-6">
+      <!-- Main content column -->
+      <div class="flex-1 lg:max-w-3xl">
+        <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md">
+          <div id="profile-section" class="mb-6 text-center space-y-2">
+            <!-- User profile will appear here -->
+          </div>
+
+          <h2 id="posts-header" class="text-xl sm:text-2xl font-semibold mb-4" style="display: none;">Posts:</h2>
+          <div id="nostr-output" class="space-y-4 text-sm font-mono overflow-x-auto">
+          </div>
+
+          <div class="mt-6 text-center">
+            <button id="load-more" style="display: none;"
+              class="bg-gradient-to-r from-slate-800 to-indigo-900 hover:from-slate-900 hover:to-indigo-950 text-white font-semibold py-2 px-4 rounded shadow-lg w-full sm:w-auto transition-colors">
+              Load More
+            </button>
+            <p id="connecting-msg" style="display: none;">Connecting to relays...</p>
+          </div>
+        </div>
       </div>
 
-      <h2 id="posts-header" class="text-xl sm:text-2xl font-semibold mb-4" style="display: none;">Posts:</h2>
-      <div id="nostr-output" class="space-y-4 text-sm font-mono overflow-x-auto">
-      </div>
-
-      <div class="mt-6 text-center">
-        <button id="load-more" style="display: none;"
-          class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded w-full sm:w-auto">
-          Load More
-        </button>
-        <p id="connecting-msg" style="display: none;">Connecting to relays...</p>
-      </div>
+      <!-- Right sidebar column -->
+      <aside class="lg:w-80 w-full">
+        <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md sticky top-6">
+          <h3 class="text-xl sm:text-2xl font-semibold mb-4 text-gray-900">Search Posts</h3>
+          <div class="space-y-3">
+            <input id="search-input" type="text" placeholder="Search for words in posts..."
+              class="border border-gray-300 rounded-lg px-4 py-2 w-full text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button id="search-button"
+              class="bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow-lg">
+              Search
+            </button>
+            <button id="clear-search-button"
+              class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow"
+              style="display: none;">
+              Clear Search
+            </button>
+          </div>
+          <p class="text-xs text-gray-500 mt-3">
+            Search through post content for specific words or phrases.
+          </p>
+        </div>
+      </aside>
     </div>
   </main>
   <script type="module" src="/main.ts"></script>
