@@ -1,5 +1,5 @@
-# Use a lightweight Node.js image
-FROM node:20-slim
+# Stage 1: Build the Vite app
+FROM node:20-slim AS builder
 
 # Create app directory
 WORKDIR /app
@@ -7,20 +7,34 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies (including dev dependencies for building)
+# Install dependencies
 RUN npm ci
 
 # Copy source code
 COPY . .
 
-# Build TypeScript to JavaScript
+# Build the Vite app
 RUN npm run build
 
-# Remove dev dependencies to reduce image size
-RUN npm prune --production
+# Stage 2: Serve with nginx
+FROM nginx:alpine
 
-# Expose port
-EXPOSE 3000
+# Copy built files from builder stage
+COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Start the compiled app directly (skip npm start which would rebuild)
-CMD ["node", "dist/server.js"]
+# Copy nginx configuration for SPA routing
+RUN echo 'server { \
+    listen 80; \
+    server_name localhost; \
+    root /usr/share/nginx/html; \
+    index index.html; \
+    location / { \
+        try_files $uri $uri/ /index.html; \
+    } \
+}' > /etc/nginx/conf.d/default.conf
+
+# Expose port 80
+EXPOSE 80
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]

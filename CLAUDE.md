@@ -4,26 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A single-page Nostr profile viewer built with Express backend and vanilla TypeScript frontend. Users can view Nostr profiles and posts by navigating to `/{npub}` URLs. The app queries multiple Nostr relays in parallel via WebSocket and displays results in real-time.
+A single-page Nostr client built with Vite and vanilla TypeScript. Users can view their home timeline, explore the global timeline, and search posts. The app queries multiple Nostr relays in parallel via WebSocket and displays results in real-time with client-side routing.
 
 ## Build & Development Commands
 
 ```bash
-# Build TypeScript to dist/ and start server
-npm start
-
-# Development mode (TypeScript watch + nodemon)
+# Development mode with Vite dev server
 npm run dev
 
-# Build only (compile TypeScript, copy HTML, reorganize output)
+# Build for production (Vite build)
 npm run build
 
-# Docker
+# Preview production build locally
+npm run preview
+
+# Docker (multi-stage build with nginx)
 docker build -t nostr-app .
-docker run -p 3000:3000 nostr-app
+docker run -p 8080:80 nostr-app
 ```
 
-The server runs on http://localhost:3000 by default (or PORT environment variable).
+The dev server runs on http://localhost:5173 by default. The production Docker container runs on port 80 (nginx).
 
 ## Architecture Overview
 
@@ -31,24 +31,36 @@ The server runs on http://localhost:3000 by default (or PORT environment variabl
 
 The codebase is organized into modular TypeScript files:
 
-- **[server.ts](server.ts)** - Express server that serves static files and provides `/api/ogp` endpoint for fetching Open Graph metadata
-- **[src/app.ts](src/app.ts)** - Main entry point; handles URL routing, initializes app with npub from URL path
+- **[src/main.ts](src/main.ts)** - Vite entry point (imports app.ts)
+- **[src/app.ts](src/app.ts)** - Main application logic; handles client-side routing (/home, /global, /{npub}), timeline management, and navigation
 - **[src/profile.ts](src/profile.ts)** - Fetches and renders Nostr profiles (kind 0 events)
-- **[src/events.ts](src/events.ts)** - Fetches and renders Nostr posts (kind 1 events) with pagination
-- **[src/utils.ts](src/utils.ts)** - Helper functions for display names, avatars, npub formatting
+- **[src/events.ts](src/events.ts)** - Fetches and renders Nostr posts (kind 1 events) with pagination for home/global timelines
+- **[src/utils.ts](src/utils.ts)** - Helper functions for display names, avatars, OGP metadata, Twitter embeds
+- **[src/index.html](src/index.html)** - HTML template with navigation, timeline container, and search sidebar
 - **[types/nostr.ts](types/nostr.ts)** - TypeScript interfaces for Nostr protocol types
-- **[types/nostr-tools.d.ts](types/nostr-tools.d.ts)** - Type definitions for nostr-tools ESM import
+- **[vite.config.ts](vite.config.ts)** - Vite configuration with Tailwind CSS integration
 
 ### Data Flow
 
-1. User navigates to `/{npub}` URL
-2. `app.ts` parses npub from URL path
-3. Decodes npub to hex pubkey using nostr-tools
-4. Fetches profile metadata (kind 0) from relays via `profile.ts`
-5. Renders profile information
-6. Fetches posts (kind 1) from relays via `events.ts`
-7. Renders posts with automatic link/image detection
-8. "Load More" button fetches older posts using pagination
+**Home Timeline (logged in users):**
+1. User connects via NIP-07 browser extension (Alby, nos2x, etc.)
+2. App fetches user's follow list (kind 3 event) from relays
+3. Loads posts (kind 1) from followed users via `events.ts`
+4. Background polling checks for new posts every 30 seconds
+5. Displays notification when new posts are available
+
+**Global Timeline:**
+1. Fetches recent posts (kind 1) from all users across relays
+2. Dynamically loads profiles for post authors
+3. Caches profiles to avoid refetching
+
+**Profile View (/{npub}):**
+1. Parses npub from URL path
+2. Decodes npub to hex pubkey using nostr-tools
+3. Fetches profile metadata (kind 0) from relays via `profile.ts`
+4. Renders profile with avatar, banner, and bio
+5. Fetches user's posts (kind 1) from relays via `events.ts`
+6. "Load More" button fetches older posts using pagination
 
 ### Relay Communication Pattern
 
@@ -61,13 +73,17 @@ The app uses a **parallel multi-relay strategy**:
 
 ### Build Process
 
-The build script performs these steps:
-1. Compile TypeScript: `tsc` (outputs to dist/)
-2. Copy HTML: `cp src/index.html dist/`
-3. Reorganize JS: `mkdir -p dist/js && cp dist/src/*.js dist/js/`
-4. Cleanup: `rm -rf dist/src dist/types`
+Vite handles the build process:
+1. Type-checks TypeScript files with `tsc --noEmit`
+2. Bundles and optimizes code with Vite build
+3. Processes Tailwind CSS (imported in main.ts)
+4. Outputs optimized assets to `dist/` directory
+5. Generates source maps for debugging
 
-**Important**: Frontend imports use `.js` extensions (not `.ts`) because they reference compiled output.
+**Docker Build:**
+- Stage 1: Builds the Vite app in a Node.js container
+- Stage 2: Serves static files with nginx (alpine-based, ~25MB)
+- nginx configured for SPA routing (all routes → index.html)
 
 ### Module System
 
@@ -87,10 +103,12 @@ Strict mode enabled with all strictness flags:
 ## Key Implementation Details
 
 ### URL Routing
-- Client-side routing via URL pathname
-- Empty path shows input form
-- `/{npub}` path loads that profile
-- Server.ts has catch-all route that returns index.html for SPA behavior
+- Client-side routing via History API (`pushState`, `popstate`)
+- `/` and `/home` - Home timeline (requires login) or welcome screen
+- `/global` - Global timeline (public, no login required)
+- `/{npub}` - Profile view for specific Nostr user
+- Navigation updates URL and maintains browser history
+- nginx serves index.html for all routes (SPA behavior)
 
 ### Event Pagination
 - Uses `untilTimestamp` to track the oldest event loaded
