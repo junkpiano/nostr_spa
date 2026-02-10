@@ -179,7 +179,10 @@ export async function loadGlobalTimeline(
                     // Mark as being fetched to avoid duplicate requests
                     fetchingProfiles.add(event.pubkey);
                     // Fetch profile asynchronously
-                    fetchProfile(event.pubkey, relays).then((fetchedProfile: NostrProfile | null): void => {
+                    fetchProfile(event.pubkey, relays, {
+                        usePersistentCache: false,
+                        persistProfile: false,
+                    }).then((fetchedProfile: NostrProfile | null): void => {
                         profileCache.set(event.pubkey, fetchedProfile);
                         fetchingProfiles.delete(event.pubkey);
                         // Update the rendered event with the fetched profile

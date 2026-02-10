@@ -50,22 +50,50 @@ export function renderEvent(
 
   const urls: string[] = [];
   const imageUrls: string[] = [];
-  const referencedNevents: string[] = Array.from(
+  const mentionedNpubs: string[] = Array.from(
     new Set(
-      [...event.content.matchAll(/nostr:(nevent1[0-9a-z]+)/gi)]
+      [...event.content.matchAll(/nostr:(npub1[0-9a-z]+)/gi)]
         .map((match: RegExpMatchArray): string | undefined => match[1])
         .filter((value: string | undefined): value is string => Boolean(value)),
     ),
   );
+  const mentionNpubToPubkey: Map<string, PubkeyHex> = new Map();
+  mentionedNpubs.forEach((mentionedNpub: string): void => {
+    try {
+      const decoded = nip19.decode(mentionedNpub);
+      if (decoded.type === "npub" && typeof decoded.data === "string") {
+        mentionNpubToPubkey.set(mentionedNpub, decoded.data as PubkeyHex);
+      }
+    } catch (error: unknown) {
+      console.warn("Failed to decode mentioned npub:", error);
+    }
+  });
+  const referencedEventRefs: string[] = Array.from(
+    new Set(
+      [...event.content.matchAll(/nostr:((?:nevent1|note1)[0-9a-z]+)/gi)]
+        .map((match: RegExpMatchArray): string | undefined => match[1])
+        .filter((value: string | undefined): value is string => Boolean(value)),
+    ),
+  );
+  const parentEventId: string | null = resolveParentEventId(event);
   const contentWithNostrLinks: string = event.content.replace(
-    /(nostr:nevent1[0-9a-z]+)/gi,
-    (nevent: string): string => {
-      const path: string = `/${nevent.replace(/^nostr:/i, "")}`;
-      return `<a href="${path}" class="text-indigo-600 underline">${nevent}</a>`;
+    /(nostr:(?:nevent1|note1)[0-9a-z]+)/gi,
+    (eventRef: string): string => {
+      const path: string = `/${eventRef.replace(/^nostr:/i, "")}`;
+      return `<a href="${path}" class="text-indigo-600 underline">${eventRef}</a>`;
     },
   );
 
-  const contentWithLinks: string = contentWithNostrLinks.replace(
+  const contentWithMentions: string = contentWithNostrLinks.replace(
+    /(nostr:npub1[0-9a-z]+)/gi,
+    (npubRef: string): string => {
+      const mentionedNpub: string = npubRef.replace(/^nostr:/i, "");
+      const label: string = `@${mentionedNpub.slice(0, 12)}...`;
+      return `<a href="/${mentionedNpub}" class="text-indigo-600 underline mention-link" data-mention-npub="${mentionedNpub}">${label}</a>`;
+    },
+  );
+
+  const contentWithLinks: string = contentWithMentions.replace(
     /(https?:\/\/[^\s]+)/g,
     (url: string): string => {
       if (url.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i)) {
@@ -91,9 +119,10 @@ export function renderEvent(
 	        <img src="${avatar}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
 	          onerror="this.src='https://placekitten.com/100/100';" />
 	      </a>
-	      <div class="flex-1 overflow-hidden">
-	        <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
-		        <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
+		      <div class="flex-1 overflow-hidden">
+		        <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
+            <div class="parent-event-container mb-2"></div>
+			        <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
             <div class="referenced-events-container space-y-2"></div>
 		        <div class="ogp-container"></div>
             <div class="mt-2 flex items-center justify-between gap-2">
@@ -104,6 +133,15 @@ export function renderEvent(
 		    </div>
 		  `;
   output.appendChild(div);
+  if (parentEventId) {
+    const parentContainer: HTMLElement | null = div.querySelector(".parent-event-container");
+    if (parentContainer) {
+      renderParentEventCard(parentEventId, parentContainer);
+    }
+  }
+  if (mentionNpubToPubkey.size > 0) {
+    enrichMentionDisplayNames(div, mentionNpubToPubkey);
+  }
 
   const deleteButton: HTMLButtonElement | null = div.querySelector(".delete-event-btn") as HTMLButtonElement | null;
   if (deleteButton) {
@@ -148,10 +186,98 @@ export function renderEvent(
     }
   }
 
-  if (referencedNevents.length > 0) {
+  if (referencedEventRefs.length > 0) {
     const referencedContainer: HTMLElement | null = div.querySelector(".referenced-events-container");
     if (referencedContainer) {
-      renderReferencedEventCards(referencedNevents, referencedContainer);
+      renderReferencedEventCards(referencedEventRefs, referencedContainer);
+    }
+  }
+}
+
+function resolveParentEventId(event: NostrEvent): string | null {
+  const eTags: string[][] = event.tags.filter((tag: string[]): boolean => tag[0] === "e" && Boolean(tag[1]));
+  if (eTags.length === 0) {
+    return null;
+  }
+
+  const replyTag: string[] | undefined = eTags.find((tag: string[]): boolean => tag[3] === "reply");
+  if (replyTag?.[1]) {
+    return replyTag[1];
+  }
+
+  const rootTag: string[] | undefined = eTags.find((tag: string[]): boolean => tag[3] === "root");
+  if (rootTag?.[1]) {
+    return rootTag[1];
+  }
+
+  return eTags[eTags.length - 1]?.[1] || null;
+}
+
+async function renderParentEventCard(parentEventId: string, container: HTMLElement): Promise<void> {
+  container.innerHTML = "";
+  const card: HTMLDivElement = document.createElement("div");
+  card.className = "border border-amber-200 bg-amber-50 rounded-lg p-3";
+  card.textContent = "Loading parent post...";
+  container.appendChild(card);
+
+  try {
+    const relays: string[] = getRelays();
+    const parentEvent: NostrEvent | null = await fetchEventByIdCached(parentEventId, relays);
+    if (!parentEvent) {
+      card.textContent = "Parent post not found.";
+      return;
+    }
+
+    const parentProfile: NostrProfile | null = await fetchProfile(parentEvent.pubkey, relays);
+    const parentNpub: Npub = nip19.npubEncode(parentEvent.pubkey);
+    const parentName: string = getDisplayName(parentNpub, parentProfile);
+    const parentAvatar: string = getAvatarURL(parentEvent.pubkey, parentProfile);
+    const preview: string = parentEvent.content.length > 220
+      ? `${parentEvent.content.slice(0, 220)}...`
+      : parentEvent.content;
+    const parentPath: string = `/${nip19.neventEncode({ id: parentEvent.id })}`;
+
+    card.innerHTML = `
+      <a href="${parentPath}" class="block hover:bg-amber-100 rounded transition-colors p-1">
+        <div class="text-xs text-amber-700 font-semibold mb-1">Replying to</div>
+        <div class="flex items-start gap-2">
+          <img
+            src="${parentAvatar}"
+            alt="${parentName}"
+            class="w-8 h-8 rounded-full object-cover flex-shrink-0"
+            onerror="this.src='https://placekitten.com/80/80';"
+          />
+          <div class="min-w-0">
+            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${parentName}</div>
+            <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${preview || "(no content)"}</div>
+          </div>
+        </div>
+      </a>
+    `;
+  } catch (error: unknown) {
+    console.warn("Failed to render parent event card:", error);
+    card.textContent = "Failed to load parent post.";
+  }
+}
+
+async function enrichMentionDisplayNames(
+  eventContainer: HTMLElement,
+  mentionNpubToPubkey: Map<string, PubkeyHex>,
+): Promise<void> {
+  const relays: string[] = getRelays();
+
+  for (const [mentionedNpub, mentionedPubkey] of mentionNpubToPubkey.entries()) {
+    try {
+      const mentionedProfile: NostrProfile | null = await fetchProfile(mentionedPubkey, relays);
+      const displayName: string = getDisplayName(mentionedNpub as Npub, mentionedProfile);
+      const anchors: NodeListOf<HTMLAnchorElement> = eventContainer.querySelectorAll(
+        `a.mention-link[data-mention-npub="${mentionedNpub}"]`,
+      );
+      anchors.forEach((anchor: HTMLAnchorElement): void => {
+        anchor.textContent = `@${displayName}`;
+      });
+    } catch (error: unknown) {
+      console.warn("Failed to resolve mentioned profile:", error);
     }
   }
 }
@@ -222,26 +348,31 @@ async function deleteEventOnRelays(targetEvent: NostrEvent): Promise<void> {
   await Promise.allSettled(publishPromises);
 }
 
-async function renderReferencedEventCards(nevents: string[], container: HTMLElement): Promise<void> {
+async function renderReferencedEventCards(eventRefs: string[], container: HTMLElement): Promise<void> {
   const currentRelays: string[] = getRelays();
   const maxCards: number = 3;
 
-  for (const nevent of nevents.slice(0, maxCards)) {
+  for (const eventRef of eventRefs.slice(0, maxCards)) {
     const card: HTMLDivElement = document.createElement("div");
     card.className = "border border-indigo-200 bg-indigo-50 rounded-lg p-3";
     card.textContent = "Loading referenced event...";
     container.appendChild(card);
 
     try {
-      const decoded = nip19.decode(nevent);
-      if (decoded.type !== "nevent") {
+      const decoded = nip19.decode(eventRef);
+      let eventId: string | undefined;
+      let relayHints: string[] = [];
+      if (decoded.type === "nevent") {
+        const data: any = decoded.data;
+        eventId = data?.id || (typeof data === "string" ? data : undefined);
+        relayHints = Array.isArray(data?.relays) ? data.relays : [];
+      } else if (decoded.type === "note") {
+        eventId = typeof decoded.data === "string" ? decoded.data : undefined;
+      } else {
         card.textContent = "Referenced event is invalid.";
         continue;
       }
 
-      const data: any = decoded.data;
-      const eventId: string | undefined = data?.id || (typeof data === "string" ? data : undefined);
-      const relayHints: string[] = Array.isArray(data?.relays) ? data.relays : [];
       if (!eventId) {
         card.textContent = "Referenced event ID is missing.";
         continue;
@@ -261,7 +392,7 @@ async function renderReferencedEventCards(nevents: string[], container: HTMLElem
       const referencedText: string = referencedEvent.content.length > 180
         ? `${referencedEvent.content.slice(0, 180)}...`
         : referencedEvent.content;
-      const referencedPath: string = `/${nevent}`;
+      const referencedPath: string = `/${eventRef}`;
 
       card.innerHTML = `
                 <a href="${referencedPath}" class="block hover:bg-indigo-100 rounded transition-colors p-1">

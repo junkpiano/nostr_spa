@@ -23,7 +23,7 @@ const limit: number = 100;
 let seenEventIds: Set<string> = new Set();
 let untilTimestamp: number = Math.floor(Date.now() / 1000);
 let profile: NostrProfile | null = null;
-const homeKinds: number[] = [1, 2, 4, 9, 11, 22, 28, 40, 70, 77];
+const homeKinds: number[] = [1, 2, 9, 11, 22, 28, 40, 70, 77];
 
 // Cache for home timeline
 let cachedHomeTimeline: { events: any[]; followedPubkeys: string[]; timestamp: number } | null = null;
@@ -157,9 +157,9 @@ function handleRoute(): void {
   } else {
     // Try to parse as npub profile
     const npub: string = path.replace("/", "").trim();
-    if (npub.startsWith("nevent")) {
+    if (npub.startsWith("nevent") || npub.startsWith("note")) {
       loadEventPage({
-        nevent: npub,
+        eventRef: npub,
         relays,
         output,
         profileSection,

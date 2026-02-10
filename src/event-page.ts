@@ -7,7 +7,7 @@ import { getAvatarURL, getDisplayName } from "./utils.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
 interface LoadEventPageOptions {
-  nevent: string;
+  eventRef: string;
   relays: string[];
   output: HTMLElement | null;
   profileSection: HTMLElement | null;
@@ -48,14 +48,18 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
   }
 
   try {
-    const decoded = nip19.decode(options.nevent);
-    if (decoded.type !== "nevent") {
-      throw new Error("Invalid nevent format");
+    const decoded = nip19.decode(options.eventRef);
+    let eventId: string | undefined;
+    let relayHints: string[] = [];
+    if (decoded.type === "nevent") {
+      const data: any = decoded.data;
+      eventId = data?.id || (typeof data === "string" ? data : undefined);
+      relayHints = Array.isArray(data?.relays) ? data.relays : [];
+    } else if (decoded.type === "note") {
+      eventId = typeof decoded.data === "string" ? decoded.data : undefined;
+    } else {
+      throw new Error("Invalid event format");
     }
-
-    const data: any = decoded.data;
-    const eventId: string | undefined = data?.id || (typeof data === "string" ? data : undefined);
-    const relayHints: string[] = Array.isArray(data?.relays) ? data.relays : [];
     if (!eventId) {
       throw new Error("Missing event id");
     }

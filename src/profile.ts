@@ -1,7 +1,27 @@
 import { getAvatarURL, getDisplayName } from "./utils";
+import { getCachedProfile, setCachedProfile } from "./profile-cache.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
-export async function fetchProfile(pubkeyHex: PubkeyHex, relays: string[]): Promise<NostrProfile | null> {
+interface FetchProfileOptions {
+    usePersistentCache?: boolean;
+    persistProfile?: boolean;
+}
+
+export async function fetchProfile(
+    pubkeyHex: PubkeyHex,
+    relays: string[],
+    options: FetchProfileOptions = {},
+): Promise<NostrProfile | null> {
+    const usePersistentCache: boolean = options.usePersistentCache !== false;
+    const persistProfile: boolean = options.persistProfile !== false;
+
+    if (usePersistentCache) {
+        const cachedProfile: NostrProfile | null = getCachedProfile(pubkeyHex);
+        if (cachedProfile) {
+            return cachedProfile;
+        }
+    }
+
     if (relays.length === 0) {
         return null;
     }
@@ -54,6 +74,9 @@ export async function fetchProfile(pubkeyHex: PubkeyHex, relays: string[]): Prom
                         clearTimeout(timeout);
                         try {
                             const profile: NostrProfile = JSON.parse(arr[2].content);
+                            if (persistProfile) {
+                                setCachedProfile(pubkeyHex, profile);
+                            }
                             finish(profile);
                             return;
                         } catch (e) {
