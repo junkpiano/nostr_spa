@@ -61,10 +61,49 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
   backdrop.addEventListener("click", closeOverlay);
   closeBtn.addEventListener("click", closeOverlay);
 
+  const isTypingContext = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    const tagName: string = target.tagName.toLowerCase();
+    if (tagName === "input" || tagName === "textarea" || target.isContentEditable) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const canOpenCompose = (): boolean => {
+    if (!options.composeButton) {
+      return false;
+    }
+    return options.composeButton.style.display !== "none";
+  };
+
   document.addEventListener("keydown", (event: KeyboardEvent): void => {
-    if (overlay.style.display === "none") return;
-    if (event.key === "Escape") {
+    const isOverlayOpen: boolean = overlay.style.display !== "none";
+
+    if (isOverlayOpen && event.key === "Escape") {
       closeOverlay();
+      return;
+    }
+
+    if (!isOverlayOpen && event.key.toLowerCase() === "n" && !isTypingContext(event.target)) {
+      if (!canOpenCompose()) {
+        return;
+      }
+      event.preventDefault();
+      refreshStatus();
+      openOverlay();
+      return;
+    }
+
+    if (isOverlayOpen && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (!submitBtn.disabled) {
+        submitBtn.click();
+      }
     }
   });
 

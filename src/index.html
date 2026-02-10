@@ -25,10 +25,6 @@
             <span>🌍</span>
             <span>Global</span>
           </button>
-          <button id="nav-compose" style="display: none;" class="w-full text-left px-4 py-3 rounded-lg hover:bg-indigo-50 transition-colors font-semibold text-indigo-700 flex items-center gap-2 border border-indigo-100">
-            <span>✍️</span>
-            <span>Post</span>
-          </button>
           <a id="nav-profile" href="#" style="display: none;" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-gray-700 flex items-center gap-2">
             <span>👤</span>
             <span>Profile</span>
@@ -92,6 +88,14 @@
       </aside>
     </div>
   </main>
+  <button
+    id="nav-compose"
+    aria-label="Create post"
+    style="display: none;"
+    class="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 text-white shadow-xl transition-all hover:scale-105 hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+  >
+    <span class="text-2xl leading-none">+</span>
+  </button>
   <script type="module" src="/main.ts"></script>
   <div id="compose-overlay" style="display: none;" class="fixed inset-0 z-50">
     <div id="compose-overlay-backdrop" class="absolute inset-0 bg-black/60"></div>

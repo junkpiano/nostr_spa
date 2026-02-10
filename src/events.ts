@@ -15,18 +15,27 @@ const fetchingProfiles: Set<PubkeyHex> = new Set();
  * @returns Promise resolving to array of followed pubkeys (hex format)
  */
 export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): Promise<PubkeyHex[]> {
-    const followedPubkeys: Set<PubkeyHex> = new Set();
     console.log(`Fetching follow list for ${pubkeyHex}`);
+    let latestFollowTimestamp: number = -1;
+    let latestFollowTags: string[][] = [];
 
-    const relayResults: Map<string, { gotEvent: boolean; tagCount: number }> = new Map();
+    const relayResults: Map<string, { gotEvent: boolean; tagCount: number; createdAt: number | null }> = new Map();
 
     const promises = relays.map(async (relayUrl: string): Promise<void> => {
         try {
             const socket: WebSocket = new WebSocket(relayUrl);
-            await new Promise<void>((resolve, reject) => {
-                const timeout = setTimeout(() => {
+            await new Promise<void>((resolve) => {
+                let settled: boolean = false;
+                const finish = (): void => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
                     socket.close();
-                    reject(new Error("Timeout"));
+                    resolve();
+                };
+
+                const timeout = setTimeout(() => {
+                    finish();
                 }, 8000);
 
                 socket.onopen = (): void => {
@@ -34,7 +43,7 @@ export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): P
                     const req: [string, string, { kinds: number[]; authors: string[]; limit: number }] = [
                         "REQ",
                         subId,
-                        { kinds: [3], authors: [pubkeyHex], limit: 1 }
+                        { kinds: [3], authors: [pubkeyHex], limit: 20 }
                     ];
                     console.log(`Requesting follows from ${relayUrl}`);
                     socket.send(JSON.stringify(req));
@@ -44,32 +53,29 @@ export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): P
                     const arr: any[] = JSON.parse(msg.data);
                     if (arr[0] === "EVENT" && arr[2]?.kind === 3) {
                         const event: NostrEvent = arr[2];
-                        relayResults.set(relayUrl, { gotEvent: true, tagCount: event.tags.length });
-                        console.log(`Got kind 3 event from ${relayUrl} with ${event.tags.length} tags`);
-                        // Extract followed pubkeys from tags
-                        event.tags.forEach((tag: string[]): void => {
-                            if (tag[0] === "p" && tag[1]) {
-                                followedPubkeys.add(tag[1]);
-                            }
+                        if (event.created_at >= latestFollowTimestamp) {
+                            latestFollowTimestamp = event.created_at;
+                            latestFollowTags = event.tags;
+                        }
+                        relayResults.set(relayUrl, {
+                            gotEvent: true,
+                            tagCount: event.tags.length,
+                            createdAt: event.created_at,
                         });
-                        clearTimeout(timeout);
-                        socket.close();
-                        resolve();
+                        console.log(
+                            `Got kind 3 event from ${relayUrl} with ${event.tags.length} tags at ${event.created_at}`,
+                        );
                     } else if (arr[0] === "EOSE") {
                         if (!relayResults.has(relayUrl)) {
-                            relayResults.set(relayUrl, { gotEvent: false, tagCount: 0 });
+                            relayResults.set(relayUrl, { gotEvent: false, tagCount: 0, createdAt: null });
                         }
-                        console.log(`EOSE from ${relayUrl}, found ${followedPubkeys.size} follows so far`);
-                        clearTimeout(timeout);
-                        socket.close();
-                        resolve();
+                        finish();
                     }
                 };
 
                 socket.onerror = (err: Event): void => {
-                    clearTimeout(timeout);
                     console.error(`WebSocket error [${relayUrl}]`, err);
-                    reject(err);
+                    finish();
                 };
             });
         } catch (e) {
@@ -79,8 +85,17 @@ export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): P
 
     await Promise.allSettled(promises);
 
+    const followedPubkeys: Set<PubkeyHex> = new Set();
+    latestFollowTags.forEach((tag: string[]): void => {
+        if (tag[0] === "p" && tag[1]) {
+            followedPubkeys.add(tag[1] as PubkeyHex);
+        }
+    });
+
     console.log(`Follow list relay summary:`, Array.from(relayResults.entries()));
-    console.log(`Total follows found: ${followedPubkeys.size}`);
+    console.log(
+        `Using latest kind 3 event at ${latestFollowTimestamp >= 0 ? latestFollowTimestamp : "n/a"}, total follows: ${followedPubkeys.size}`,
+    );
     return Array.from(followedPubkeys);
 }
 

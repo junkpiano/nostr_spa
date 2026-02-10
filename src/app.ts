@@ -6,13 +6,15 @@ import { setupImageOverlay } from "./overlays.js";
 import { setEventMeta } from "./meta.js";
 import { getRelays, setRelays, normalizeRelayUrl } from "./relays.js";
 import { loadRelaysPage } from "./relays-page.js";
+import { setupFollowToggle, publishEventToRelays } from "./follow.js";
+import { setupSearchBar } from "./search.js";
+import { setupNavigation, setActiveNav } from "./navigation.js";
 import { clearSessionPrivateKey, getSessionPrivateKey, setSessionPrivateKeyFromRaw, updateLogoutButton } from "./session.js";
-import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../types/nostr";
+import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
 const profileSection: HTMLElement | null = document.getElementById("profile-section");
 const composeButton: HTMLElement | null = document.getElementById("nav-compose");
-const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
 const connectingMsg: HTMLElement | null = document.getElementById("connecting-msg");
 let relays: string[] = getRelays();
 const limit: number = 100;
@@ -56,10 +58,13 @@ document.addEventListener("DOMContentLoaded", (): void => {
   }
 
   // Setup search functionality
-  setupSearchBar();
+  setupSearchBar(output);
 
   // Setup navigation
-  setupNavigation();
+  setupNavigation({
+    handleRoute,
+    onLogout: handleLogout,
+  });
 
   // Setup image overlay
   setupImageOverlay();
@@ -362,7 +367,13 @@ async function startApp(npub: Npub): Promise<void> {
   if (profileSection) {
     renderProfile(pubkeyHex, npub, profile, profileSection);
   }
-  await setupFollowToggle(pubkeyHex);
+  await setupFollowToggle(pubkeyHex, {
+    getRelays: (): string[] => relays,
+    publishEvent: publishEventToRelays,
+    onFollowListChanged: (): void => {
+      cachedHomeTimeline = null;
+    },
+  });
   if (output) {
     await loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg);
   }
@@ -373,126 +384,23 @@ async function startApp(npub: Npub): Promise<void> {
   }
 }
 
-async function setupFollowToggle(targetPubkey: PubkeyHex): Promise<void> {
-  const container: HTMLElement | null = document.getElementById("follow-action");
-  if (!container) return;
+function handleLogout(): void {
+  localStorage.removeItem("nostr_pubkey");
+  clearSessionPrivateKey();
 
-  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
-  if (!storedPubkey || storedPubkey === targetPubkey) {
-    container.innerHTML = "";
-    return;
+  cachedHomeTimeline = null;
+
+  if (backgroundFetchInterval) {
+    clearInterval(backgroundFetchInterval);
+    backgroundFetchInterval = null;
   }
 
-  container.innerHTML = `
-    <button id="follow-toggle" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow">
-      Follow
-    </button>
-  `;
-
-  const button: HTMLButtonElement | null = document.getElementById("follow-toggle") as HTMLButtonElement;
-  if (!button) return;
-
-  if (!(window as any).nostr || !(window as any).nostr.signEvent) {
-    button.textContent = "Follow (NIP-07 required)";
-    button.disabled = true;
-    button.classList.add("opacity-60", "cursor-not-allowed");
-    return;
+  const notification = document.getElementById("new-posts-notification");
+  if (notification) {
+    notification.remove();
   }
 
-  let isFollowing: boolean = false;
-  let followList: PubkeyHex[] = [];
-
-  try {
-    followList = await fetchFollowList(storedPubkey as PubkeyHex, relays);
-    isFollowing = followList.includes(targetPubkey);
-  } catch (e) {
-    console.warn("Failed to load follow list for toggle", e);
-  }
-
-  const updateButton = (): void => {
-    if (isFollowing) {
-      button.textContent = "Unfollow";
-      button.className = "bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow";
-    } else {
-      button.textContent = "Follow";
-      button.className = "bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow";
-    }
-  };
-
-  updateButton();
-
-  button.addEventListener("click", async (): Promise<void> => {
-    button.disabled = true;
-    button.classList.add("opacity-60", "cursor-not-allowed");
-
-    try {
-      followList = await fetchFollowList(storedPubkey as PubkeyHex, relays);
-      const followSet: Set<PubkeyHex> = new Set(followList);
-      if (isFollowing) {
-        followSet.delete(targetPubkey);
-      } else {
-        followSet.add(targetPubkey);
-      }
-
-      const tags: string[][] = Array.from(followSet).map((pubkey: PubkeyHex): string[] => ["p", pubkey]);
-      const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
-        kind: 3,
-        pubkey: storedPubkey as PubkeyHex,
-        created_at: Math.floor(Date.now() / 1000),
-        tags,
-        content: "",
-      };
-
-      const signedEvent: NostrEvent = await (window as any).nostr.signEvent(unsignedEvent);
-      await publishEventToRelays(signedEvent, relays);
-
-      isFollowing = !isFollowing;
-      updateButton();
-    } catch (error: unknown) {
-      console.error("Failed to update follow list:", error);
-      alert("Failed to update follow list. Please try again.");
-    } finally {
-      button.disabled = false;
-      button.classList.remove("opacity-60", "cursor-not-allowed");
-    }
-  });
-}
-
-async function publishEventToRelays(event: NostrEvent, relayList: string[]): Promise<void> {
-  const promises = relayList.map(async (relayUrl: string): Promise<void> => {
-    try {
-      const socket: WebSocket = new WebSocket(relayUrl);
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          socket.close();
-          resolve();
-        }, 5000);
-
-        socket.onopen = (): void => {
-          socket.send(JSON.stringify(["EVENT", event]));
-        };
-
-        socket.onmessage = (msg: MessageEvent): void => {
-          const arr: any[] = JSON.parse(msg.data);
-          if (arr[0] === "OK") {
-            clearTimeout(timeout);
-            socket.close();
-            resolve();
-          }
-        };
-
-        socket.onerror = (): void => {
-          clearTimeout(timeout);
-          socket.close();
-          resolve();
-        };
-      });
-    } catch (e) {
-      console.warn(`Failed to publish follow event to ${relayUrl}:`, e);
-    }
-  });
-
-  await Promise.allSettled(promises);
+  updateLogoutButton(composeButton);
 }
 
 async function showInputForm(): Promise<void> {
@@ -621,109 +529,6 @@ async function showInputForm(): Promise<void> {
     }
   }
 }
-
-function setupSearchBar(): void {
-  const searchButton: HTMLElement | null = document.getElementById("search-button");
-  const clearSearchButton: HTMLElement | null = document.getElementById("clear-search-button");
-  const searchInput: HTMLInputElement | null = document.getElementById("search-input") as HTMLInputElement;
-
-  function performSearch(): void {
-    if (searchInput && output) {
-      const query: string = searchInput.value.trim().toLowerCase();
-      if (!query) {
-        clearSearch();
-        return;
-      }
-
-      // Get all event containers
-      const eventContainers: NodeListOf<HTMLElement> = output.querySelectorAll(".event-container");
-      let matchCount: number = 0;
-
-      eventContainers.forEach((container: HTMLElement): void => {
-        const contentDiv: HTMLElement | null = container.querySelector(".whitespace-pre-wrap");
-        if (contentDiv) {
-          const content: string = contentDiv.textContent?.toLowerCase() || "";
-          if (content.includes(query)) {
-            container.style.display = "";
-            matchCount++;
-          } else {
-            container.style.display = "none";
-          }
-        }
-      });
-
-      // Show clear button when search is active
-      if (clearSearchButton) {
-        clearSearchButton.style.display = "";
-      }
-
-      // Update header to show search results count
-      const postsHeader: HTMLElement | null = document.getElementById("posts-header");
-      if (postsHeader) {
-        postsHeader.textContent = `Search Results (${matchCount})`;
-      }
-    }
-  }
-
-  function clearSearch(): void {
-    if (searchInput) {
-      searchInput.value = "";
-    }
-
-    if (output) {
-      // Show all event containers
-      const eventContainers: NodeListOf<HTMLElement> = output.querySelectorAll(".event-container");
-      eventContainers.forEach((container: HTMLElement): void => {
-        container.style.display = "";
-      });
-    }
-
-    // Hide clear button
-    if (clearSearchButton) {
-      clearSearchButton.style.display = "none";
-    }
-
-    // Reset header text
-    const postsHeader: HTMLElement | null = document.getElementById("posts-header");
-    if (postsHeader) {
-      const path: string = window.location.pathname;
-      if (path === "/global") {
-        postsHeader.textContent = "Global Timeline";
-      } else if (path === "/home") {
-        postsHeader.textContent = "Home Timeline";
-      } else if (path === "/relays") {
-        postsHeader.textContent = "Relay Management";
-      } else {
-        postsHeader.textContent = "Posts:";
-      }
-    }
-  }
-
-  if (searchButton) {
-    searchButton.addEventListener("click", performSearch);
-  }
-
-  if (clearSearchButton) {
-    clearSearchButton.addEventListener("click", clearSearch);
-  }
-
-  if (searchInput) {
-    searchInput.addEventListener("keypress", (e: KeyboardEvent): void => {
-      if (e.key === "Enter") {
-        performSearch();
-      }
-    });
-
-    // Real-time search as user types
-    searchInput.addEventListener("input", (): void => {
-      const query: string = searchInput.value.trim();
-      if (query === "") {
-        clearSearch();
-      }
-    });
-  }
-}
-
 
 async function loadUserHomeTimeline(pubkeyHex: PubkeyHex): Promise<void> {
   try {
@@ -919,99 +724,4 @@ function showNewPostsNotification(count: number): void {
       <span class="ml-2">↻ Click to refresh</span>
     `;
   }
-}
-
-// Set active navigation button
-function setActiveNav(
-  homeButton: HTMLElement | null,
-  globalButton: HTMLElement | null,
-  relaysButton: HTMLElement | null,
-  profileLink: HTMLElement | null,
-  activeButton: HTMLElement | null
-): void {
-  // Remove active state from all buttons
-  if (homeButton) {
-    homeButton.classList.remove("bg-indigo-100", "text-indigo-700");
-    homeButton.classList.add("text-gray-700");
-  }
-  if (globalButton) {
-    globalButton.classList.remove("bg-indigo-100", "text-indigo-700");
-    globalButton.classList.add("text-gray-700");
-  }
-  if (relaysButton) {
-    relaysButton.classList.remove("bg-indigo-100", "text-indigo-700");
-    relaysButton.classList.add("text-gray-700");
-  }
-  if (profileLink) {
-    profileLink.classList.remove("bg-indigo-100", "text-indigo-700");
-    profileLink.classList.add("text-gray-700");
-  }
-
-  // Add active state to the clicked button
-  if (activeButton) {
-    activeButton.classList.remove("text-gray-700");
-    activeButton.classList.add("bg-indigo-100", "text-indigo-700");
-  }
-
-}
-
-function setupNavigation(): void {
-  const homeButton: HTMLElement | null = document.getElementById("nav-home");
-  const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
-  const logoutButton: HTMLElement | null = document.getElementById("nav-logout");
-
-  if (homeButton) {
-    homeButton.addEventListener("click", (): void => {
-      window.history.pushState(null, "", "/home");
-      handleRoute();
-    });
-  }
-
-  if (globalButton) {
-    globalButton.addEventListener("click", (): void => {
-      window.history.pushState(null, "", "/global");
-      handleRoute();
-    });
-  }
-
-  if (relaysButton) {
-    relaysButton.addEventListener("click", (): void => {
-      window.history.pushState(null, "", "/relays");
-      handleRoute();
-    });
-  }
-
-  if (logoutButton) {
-    logoutButton.addEventListener("click", (): void => {
-      // Clear login session
-      localStorage.removeItem("nostr_pubkey");
-      clearSessionPrivateKey();
-
-      // Clear cache
-      cachedHomeTimeline = null;
-
-      // Stop background fetching
-      if (backgroundFetchInterval) {
-        clearInterval(backgroundFetchInterval);
-        backgroundFetchInterval = null;
-      }
-
-      // Remove new posts notification
-      const notification = document.getElementById("new-posts-notification");
-      if (notification) {
-        notification.remove();
-      }
-
-      // Update logout button visibility
-      updateLogoutButton(composeButton);
-
-      // Navigate to home (will show welcome screen since not logged in)
-      window.history.pushState(null, "", "/home");
-      handleRoute();
-    });
-  }
-
-  // Initial update of logout button
-  updateLogoutButton(composeButton);
 }
