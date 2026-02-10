@@ -1,6 +1,8 @@
-import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
+import { nip19, finalizeEvent } from "https://esm.sh/nostr-tools@2.17.0";
 import { getAvatarURL, getDisplayName, fetchOGP, isTwitterURL, fetchTwitterEmbed, loadTwitterWidgets } from "./utils.js";
 import { fetchProfile } from "./profile.js";
+import { getRelays } from "./relays.js";
+import { getSessionPrivateKey } from "./session.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../types/nostr";
 
 // Cache for profiles to avoid refetching
@@ -150,6 +152,73 @@ export async function fetchEventById(eventId: string, relays: string[]): Promise
     return null;
 }
 
+export async function isEventDeleted(
+    eventId: string,
+    authorPubkey: PubkeyHex,
+    relays: string[],
+): Promise<boolean> {
+    const checks = relays.map(async (relayUrl: string): Promise<boolean> => {
+        try {
+            const socket: WebSocket = new WebSocket(relayUrl);
+            return await new Promise<boolean>((resolve) => {
+                let settled: boolean = false;
+                const finish = (deleted: boolean): void => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    socket.close();
+                    resolve(deleted);
+                };
+
+                const timeout = setTimeout(() => {
+                    finish(false);
+                }, 5000);
+
+                socket.onopen = (): void => {
+                    const subId: string = "deleted-" + Math.random().toString(36).slice(2);
+                    const req: [string, string, { kinds: number[]; authors: string[]; "#e": string[]; limit: number }] = [
+                        "REQ",
+                        subId,
+                        {
+                            kinds: [5],
+                            authors: [authorPubkey],
+                            "#e": [eventId],
+                            limit: 20,
+                        },
+                    ];
+                    socket.send(JSON.stringify(req));
+                };
+
+                socket.onmessage = (msg: MessageEvent): void => {
+                    const arr: any[] = JSON.parse(msg.data);
+                    if (arr[0] === "EVENT" && arr[2]?.kind === 5) {
+                        const deleteEvent: NostrEvent = arr[2];
+                        const referencesTarget: boolean = deleteEvent.tags.some(
+                            (tag: string[]): boolean => tag[0] === "e" && tag[1] === eventId,
+                        );
+                        if (referencesTarget) {
+                            finish(true);
+                            return;
+                        }
+                    } else if (arr[0] === "EOSE") {
+                        finish(false);
+                    }
+                };
+
+                socket.onerror = (): void => {
+                    finish(false);
+                };
+            });
+        } catch (e) {
+            console.warn(`Failed to check delete event on ${relayUrl}:`, e);
+            return false;
+        }
+    });
+
+    const results: boolean[] = await Promise.all(checks);
+    return results.some(Boolean);
+}
+
 export async function loadEvents(
     pubkeyHex: PubkeyHex,
     profile: NostrProfile | null,
@@ -258,10 +327,26 @@ export function renderEvent(event: NostrEvent, profile: NostrProfile | null, npu
     const dateHtml: string = eventPermalink
         ? `<a href="${eventPermalink}" class="text-xs text-gray-500 hover:text-blue-600 transition-colors">🕒 ${createdAt}</a>`
         : `<div class="text-xs text-gray-500">🕒 ${createdAt}</div>`;
+    const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+    const canDeletePost: boolean = Boolean(storedPubkey && storedPubkey === event.pubkey);
+    const deleteButtonHtml: string = canDeletePost
+        ? `
+          <button class="delete-event-btn text-red-500 hover:text-red-700 transition-colors p-1 rounded" aria-label="Delete post" title="Delete post">
+            🗑️
+          </button>
+        `
+        : "";
 
     // Extract URLs for OGP fetching and image overlay
     const urls: string[] = [];
     const imageUrls: string[] = [];
+    const referencedNevents: string[] = Array.from(
+        new Set(
+            [...event.content.matchAll(/nostr:(nevent1[0-9a-z]+)/gi)]
+                .map((match: RegExpMatchArray): string | undefined => match[1])
+                .filter((value: string | undefined): value is string => Boolean(value))
+        )
+    );
     const contentWithNostrLinks: string = event.content.replace(
         /(nostr:nevent1[0-9a-z]+)/gi,
         (nevent: string): string => {
@@ -291,20 +376,47 @@ export function renderEvent(event: NostrEvent, profile: NostrProfile | null, npu
         div.dataset.images = JSON.stringify(imageUrls);
     }
     div.innerHTML = `
-    <div class="flex items-start space-x-4">
+	    <div class="flex items-start space-x-4">
       <a href="/${npub}" class="flex-shrink-0 hover:opacity-80 transition-opacity">
         <img src="${avatar}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
           onerror="this.src='https://placekitten.com/100/100';" />
       </a>
       <div class="flex-1 overflow-hidden">
         <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
-        <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
-        <div class="ogp-container"></div>
-        ${dateHtml}
-      </div>
-    </div>
-  `;
+	        <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
+            <div class="referenced-events-container space-y-2"></div>
+	        <div class="ogp-container"></div>
+            <div class="mt-2 flex items-center justify-between gap-2">
+                ${dateHtml}
+                ${deleteButtonHtml}
+            </div>
+	      </div>
+	    </div>
+	  `;
     output.appendChild(div);
+
+    const deleteButton: HTMLButtonElement | null = div.querySelector(".delete-event-btn") as HTMLButtonElement | null;
+    if (deleteButton) {
+        deleteButton.addEventListener("click", async (): Promise<void> => {
+            const confirmed: boolean = window.confirm("Delete this post?");
+            if (!confirmed) {
+                return;
+            }
+
+            deleteButton.disabled = true;
+            deleteButton.classList.add("opacity-60", "cursor-not-allowed");
+
+            try {
+                await deleteEventOnRelays(event);
+                div.remove();
+            } catch (error: unknown) {
+                console.error("Failed to delete event:", error);
+                alert("Failed to delete post. Please try again.");
+                deleteButton.disabled = false;
+                deleteButton.classList.remove("opacity-60", "cursor-not-allowed");
+            }
+        });
+    }
 
     // Fetch and render OGP cards for non-image URLs
     if (urls.length > 0) {
@@ -325,6 +437,143 @@ export function renderEvent(event: NostrEvent, profile: NostrProfile | null, npu
                     }
                 }
             });
+        }
+    }
+
+    if (referencedNevents.length > 0) {
+        const referencedContainer: HTMLElement | null = div.querySelector(".referenced-events-container");
+        if (referencedContainer) {
+            renderReferencedEventCards(referencedNevents, referencedContainer);
+        }
+    }
+}
+
+async function deleteEventOnRelays(targetEvent: NostrEvent): Promise<void> {
+    const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+    if (!storedPubkey || storedPubkey !== targetEvent.pubkey) {
+        throw new Error("You can only delete your own posts.");
+    }
+
+    const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
+        kind: 5,
+        pubkey: storedPubkey as PubkeyHex,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [["e", targetEvent.id]],
+        content: "",
+    };
+
+    let signedEvent: NostrEvent;
+    if ((window as any).nostr && (window as any).nostr.signEvent) {
+        signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
+    } else {
+        const privateKey: Uint8Array | null = getSessionPrivateKey();
+        if (!privateKey) {
+            throw new Error("No signing method available");
+        }
+        signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
+    }
+
+    const relays: string[] = getRelays();
+    const publishPromises = relays.map(async (relayUrl: string): Promise<void> => {
+        try {
+            const socket: WebSocket = new WebSocket(relayUrl);
+            await new Promise<void>((resolve) => {
+                let settled: boolean = false;
+                const finish = (): void => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    socket.close();
+                    resolve();
+                };
+
+                const timeout = setTimeout(() => {
+                    finish();
+                }, 5000);
+
+                socket.onopen = (): void => {
+                    socket.send(JSON.stringify(["EVENT", signedEvent]));
+                };
+
+                socket.onmessage = (msg: MessageEvent): void => {
+                    const arr: any[] = JSON.parse(msg.data);
+                    if (arr[0] === "OK") {
+                        finish();
+                    }
+                };
+
+                socket.onerror = (): void => {
+                    finish();
+                };
+            });
+        } catch (e) {
+            console.warn(`Failed to publish delete event to ${relayUrl}:`, e);
+        }
+    });
+
+    await Promise.allSettled(publishPromises);
+}
+
+async function renderReferencedEventCards(nevents: string[], container: HTMLElement): Promise<void> {
+    const currentRelays: string[] = getRelays();
+    const maxCards: number = 3;
+
+    for (const nevent of nevents.slice(0, maxCards)) {
+        const card: HTMLDivElement = document.createElement("div");
+        card.className = "border border-indigo-200 bg-indigo-50 rounded-lg p-3";
+        card.textContent = "Loading referenced event...";
+        container.appendChild(card);
+
+        try {
+            const decoded = nip19.decode(nevent);
+            if (decoded.type !== "nevent") {
+                card.textContent = "Referenced event is invalid.";
+                continue;
+            }
+
+            const data: any = decoded.data;
+            const eventId: string | undefined = data?.id || (typeof data === "string" ? data : undefined);
+            const relayHints: string[] = Array.isArray(data?.relays) ? data.relays : [];
+            if (!eventId) {
+                card.textContent = "Referenced event ID is missing.";
+                continue;
+            }
+
+            const relaysToUse: string[] = relayHints.length > 0 ? relayHints : currentRelays;
+            const referencedEvent: NostrEvent | null = await fetchEventById(eventId, relaysToUse);
+            if (!referencedEvent) {
+                card.textContent = "Referenced event not found.";
+                continue;
+            }
+
+            const referencedProfile: NostrProfile | null = await fetchProfile(referencedEvent.pubkey, relaysToUse);
+            const referencedNpub: Npub = nip19.npubEncode(referencedEvent.pubkey);
+            const referencedName: string = getDisplayName(referencedNpub, referencedProfile);
+            const referencedAvatar: string = getAvatarURL(referencedEvent.pubkey, referencedProfile);
+            const referencedText: string = referencedEvent.content.length > 180
+                ? `${referencedEvent.content.slice(0, 180)}...`
+                : referencedEvent.content;
+            const referencedPath: string = `/${nevent}`;
+
+            card.innerHTML = `
+                <a href="${referencedPath}" class="block hover:bg-indigo-100 rounded transition-colors p-1">
+                    <div class="flex items-start gap-2">
+                        <img
+                            src="${referencedAvatar}"
+                            alt="${referencedName}"
+                            class="w-8 h-8 rounded-full object-cover flex-shrink-0"
+                            onerror="this.src='https://placekitten.com/80/80';"
+                        />
+                        <div class="min-w-0">
+                            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${referencedName}</div>
+                            <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${referencedText || "(no content)"}</div>
+                        </div>
+                    </div>
+                </a>
+            `;
+        } catch (error: unknown) {
+            console.warn("Failed to render referenced event card:", error);
+            card.textContent = "Failed to load referenced event.";
         }
     }
 }

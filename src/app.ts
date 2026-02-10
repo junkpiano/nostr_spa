@@ -1,6 +1,6 @@
 import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
 import { fetchProfile, renderProfile } from "./profile.js";
-import { loadEvents, loadGlobalTimeline, fetchFollowList, loadHomeTimeline, fetchEventById, renderEvent } from "./events.js";
+import { loadEvents, loadGlobalTimeline, fetchFollowList, loadHomeTimeline, fetchEventById, isEventDeleted, renderEvent } from "./events.js";
 import { setupComposeOverlay } from "./compose.js";
 import { setupImageOverlay } from "./overlays.js";
 import { setEventMeta } from "./meta.js";
@@ -336,6 +336,12 @@ async function loadEventPage(nevent: string): Promise<void> {
 
     if (!event) {
       output.innerHTML = "<p class='text-red-500'>Event not found on the configured relays.</p>";
+      return;
+    }
+
+    const deleted: boolean = await isEventDeleted(event.id, event.pubkey as PubkeyHex, relaysToUse);
+    if (deleted) {
+      output.innerHTML = "<p class='text-gray-600'>This event was deleted by the author.</p>";
       return;
     }
 

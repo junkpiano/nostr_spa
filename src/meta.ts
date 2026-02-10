@@ -22,6 +22,22 @@ function upsertMetaName(name: string, content: string): void {
   tag.setAttribute("content", content);
 }
 
+function removeMetaTag(property: string): void {
+  const selector: string = `meta[property="${property}"]`;
+  const tag: HTMLMetaElement | null = document.head.querySelector(selector);
+  if (tag) {
+    tag.remove();
+  }
+}
+
+function removeMetaName(name: string): void {
+  const selector: string = `meta[name="${name}"]`;
+  const tag: HTMLMetaElement | null = document.head.querySelector(selector);
+  if (tag) {
+    tag.remove();
+  }
+}
+
 function extractFirstImageUrl(content: string): string | null {
   const match: RegExpMatchArray | null = content.match(/https?:\/\/[^\s]+?\.(jpeg|jpg|gif|png|webp|svg)/i);
   return match ? match[0] : null;
@@ -39,6 +55,17 @@ export function setEventMeta(event: { id: string; content: string; created_at: n
   upsertMetaTag("og:url", window.location.href);
   if (imageUrl) {
     upsertMetaTag("og:image", imageUrl);
+  } else {
+    removeMetaTag("og:image");
   }
+
   upsertMetaName("description", description || `Event by ${npub}`);
+  upsertMetaName("twitter:card", imageUrl ? "summary_large_image" : "summary");
+  upsertMetaName("twitter:title", title);
+  upsertMetaName("twitter:description", description || `Event by ${npub}`);
+  if (imageUrl) {
+    upsertMetaName("twitter:image", imageUrl);
+  } else {
+    removeMetaName("twitter:image");
+  }
 }
