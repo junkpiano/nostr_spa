@@ -64,15 +64,12 @@ export function updateLogoutButton(composeButton: HTMLElement | null): void {
           ? (storedPubkey as Npub)
           : nip19.npubEncode(storedPubkey);
         profileLink.href = `/${npub}`;
-        profileLink.style.display = "";
       } catch (e) {
         console.warn("Failed to build profile link from stored pubkey:", e);
         profileLink.href = "#";
-        profileLink.style.display = "none";
       }
     } else {
       profileLink.href = "#";
-      profileLink.style.display = "none";
     }
   }
 

@@ -3,6 +3,7 @@ import { fetchProfile } from "./profile.js";
 import { fetchEventById, isEventDeleted, renderEvent } from "./events.js";
 import { setEventMeta } from "./meta.js";
 import { setActiveNav } from "./navigation.js";
+import { getAvatarURL, getDisplayName } from "./utils.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
 interface LoadEventPageOptions {
@@ -70,16 +71,33 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
       return;
     }
 
-    const deleted: boolean = await isEventDeleted(event.id, event.pubkey as PubkeyHex, relaysToUse);
+    const npubStr: Npub = nip19.npubEncode(event.pubkey);
+    setEventMeta(event, npubStr);
+    // Render immediately to reduce perceived delay.
+    renderEvent(event, null, npubStr, event.pubkey, options.output);
+
+    // Run slow checks/metadata fetches in parallel after first paint.
+    const [deleted, eventProfile] = await Promise.all([
+      isEventDeleted(event.id, event.pubkey as PubkeyHex, relaysToUse),
+      fetchProfile(event.pubkey, relaysToUse),
+    ]);
+
     if (deleted) {
       options.output.innerHTML = "<p class='text-gray-600'>This event was deleted by the author.</p>";
       return;
     }
 
-    const eventProfile: NostrProfile | null = await fetchProfile(event.pubkey, relaysToUse);
-    const npubStr: Npub = nip19.npubEncode(event.pubkey);
-    setEventMeta(event, npubStr);
-    renderEvent(event, eventProfile, npubStr, event.pubkey, options.output);
+    if (eventProfile) {
+      const eventCard: HTMLElement | null = options.output.querySelector(".event-container");
+      const nameEl: HTMLElement | null = eventCard?.querySelector(".event-username") as HTMLElement | null;
+      const avatarEl: HTMLImageElement | null = eventCard?.querySelector(".event-avatar") as HTMLImageElement | null;
+      if (nameEl) {
+        nameEl.textContent = `👤 ${getDisplayName(npubStr, eventProfile)}`;
+      }
+      if (avatarEl) {
+        avatarEl.src = getAvatarURL(event.pubkey, eventProfile);
+      }
+    }
   } catch (error: unknown) {
     console.error("Failed to load nevent:", error);
     if (options.output) {

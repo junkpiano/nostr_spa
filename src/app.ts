@@ -35,6 +35,20 @@ let activeWebSockets: WebSocket[] = [];
 // Track active timeouts
 let activeTimeouts: number[] = [];
 
+function renderLoadingState(message: string, subMessage: string = ""): void {
+  if (!output) {
+    return;
+  }
+
+  output.innerHTML = `
+    <div class="text-center py-12">
+      <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+      <p class="text-gray-700 font-semibold">${message}</p>
+      ${subMessage ? `<p class="text-gray-500 text-sm mt-2">${subMessage}</p>` : ""}
+    </div>
+  `;
+}
+
 // Close all active WebSocket connections and clear timeouts
 function closeAllWebSockets(): void {
   activeWebSockets.forEach((socket: WebSocket): void => {
@@ -214,9 +228,7 @@ async function loadHomePage(): Promise<void> {
       // Use cached follow list, reload timeline
       console.log("Using cached follow list, reloading home timeline");
 
-      if (output) {
-        output.innerHTML = "";
-      }
+      renderLoadingState("Loading your timeline...");
       seenEventIds.clear();
       untilTimestamp = Math.floor(Date.now() / 1000);
       newestEventTimestamp = untilTimestamp;
@@ -302,9 +314,7 @@ async function loadGlobalPage(): Promise<void> {
   }
 
   // Clear output and load global timeline
-  if (output) {
-    output.innerHTML = "";
-  }
+  renderLoadingState("Loading global timeline...");
 
   const postsHeader: HTMLElement | null = document.getElementById("posts-header");
   if (postsHeader) {
@@ -326,6 +336,8 @@ async function loadGlobalPage(): Promise<void> {
 }
 
 async function startApp(npub: Npub): Promise<void> {
+  renderLoadingState("Loading profile and posts...");
+
   let pubkeyHex: PubkeyHex;
   try {
     const decoded = nip19.decode(npub);

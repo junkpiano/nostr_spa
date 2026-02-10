@@ -23,6 +23,7 @@ export async function loadEvents(
     connectingMsg: HTMLElement | null
 ): Promise<void> {
     let anyEventLoaded: boolean = false;
+    let clearedPlaceholder: boolean = false;
     const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
 
     if (connectingMsg) {
@@ -57,6 +58,11 @@ export async function loadEvents(
                 const event: NostrEvent = arr[2];
                 if (seenEventIds.has(event.id)) return;
                 seenEventIds.add(event.id);
+
+                if (!clearedPlaceholder) {
+                    output.innerHTML = "";
+                    clearedPlaceholder = true;
+                }
 
                 if (connectingMsg) {
                     connectingMsg.style.display = "none"; // Hide connecting message once events start loading
@@ -123,6 +129,7 @@ export async function loadGlobalTimeline(
     activeTimeouts: number[] = []
 ): Promise<void> {
     const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
+    let clearedPlaceholder: boolean = false;
 
     if (connectingMsg) {
         connectingMsg.style.display = ""; // Show connecting message
@@ -156,6 +163,11 @@ export async function loadGlobalTimeline(
                 const event: NostrEvent = arr[2];
                 if (seenEventIds.has(event.id)) return;
                 seenEventIds.add(event.id);
+
+                if (!clearedPlaceholder) {
+                    output.innerHTML = "";
+                    clearedPlaceholder = true;
+                }
 
                 if (connectingMsg) {
                     connectingMsg.style.display = "none";
@@ -258,9 +270,11 @@ export async function loadHomeTimeline(
     activeTimeouts: number[] = []
 ): Promise<void> {
     let flushScheduled: boolean = false;
-    let flushed: boolean = false;
     let pendingRelays: number = relays.length;
     const bufferedEvents: NostrEvent[] = [];
+    const renderedEventIds: Set<string> = new Set();
+    let finalized: boolean = false;
+    let clearedPlaceholder: boolean = false;
 
     if (followedPubkeys.length === 0) {
         if (output) {
@@ -285,12 +299,19 @@ export async function loadHomeTimeline(
     }
 
     const flushBufferedEvents = (): void => {
-        if (flushed) return;
-        flushed = true;
-
         bufferedEvents.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
 
+        if (!clearedPlaceholder && bufferedEvents.length > 0) {
+            output.innerHTML = "";
+            clearedPlaceholder = true;
+        }
+
         bufferedEvents.forEach((event: NostrEvent): void => {
+            if (renderedEventIds.has(event.id)) {
+                return;
+            }
+            renderedEventIds.add(event.id);
+
             // Fetch profile for this event's author if not cached
             let profile: NostrProfile | null = profileCache.get(event.pubkey) || null;
             if (!profileCache.has(event.pubkey) && !fetchingProfiles.has(event.pubkey)) {
@@ -327,16 +348,32 @@ export async function loadHomeTimeline(
             untilTimestamp = Math.min(untilTimestamp, event.created_at);
         });
 
-        if (connectingMsg) {
+        if (connectingMsg && renderedEventIds.size > 0) {
             connectingMsg.style.display = "none";
+        }
+    };
+
+    const finalizeLoading = (): void => {
+        if (finalized) {
+            return;
+        }
+        finalized = true;
+        flushBufferedEvents();
+
+        if (renderedEventIds.size === 0 && seenEventIds.size === 0) {
+            output.innerHTML = "<p class='text-red-500'>No posts found from selected kinds.</p>";
         }
 
         if (loadMoreBtn) {
             (loadMoreBtn as HTMLButtonElement).disabled = false;
             loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
-            if (bufferedEvents.length > 0) {
+            if (renderedEventIds.size > 0) {
                 loadMoreBtn.style.display = "inline";
             }
+        }
+
+        if (connectingMsg) {
+            connectingMsg.style.display = "none";
         }
     };
 
@@ -344,13 +381,9 @@ export async function loadHomeTimeline(
         if (flushScheduled) return;
         flushScheduled = true;
         const timeoutId = window.setTimeout((): void => {
-            if (!flushed) {
-                flushBufferedEvents();
-                if (bufferedEvents.length === 0 && seenEventIds.size === 0) {
-                    output.innerHTML = "<p class='text-red-500'>No posts found from selected kinds.</p>";
-                }
-            }
-        }, 5000);
+            flushScheduled = false;
+            flushBufferedEvents();
+        }, 300);
         activeTimeouts.push(timeoutId);
     };
 
@@ -389,7 +422,7 @@ export async function loadHomeTimeline(
                 socket.close();
                 pendingRelays -= 1;
                 if (pendingRelays <= 0) {
-                    flushBufferedEvents();
+                    finalizeLoading();
                 } else {
                     scheduleFlush();
                 }
@@ -407,7 +440,7 @@ export async function loadHomeTimeline(
             }
             pendingRelays -= 1;
             if (pendingRelays <= 0) {
-                flushBufferedEvents();
+                finalizeLoading();
             } else {
                 scheduleFlush();
             }

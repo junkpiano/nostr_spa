@@ -2,11 +2,42 @@ import { getAvatarURL, getDisplayName } from "./utils";
 import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
 export async function fetchProfile(pubkeyHex: PubkeyHex, relays: string[]): Promise<NostrProfile | null> {
-    let profile: NostrProfile | null = null;
-    for (const relayUrl of relays) {
-        try {
-            const socket: WebSocket = new WebSocket(relayUrl);
-            await new Promise<void>((resolve, reject) => {
+    if (relays.length === 0) {
+        return null;
+    }
+
+    return await new Promise<NostrProfile | null>((resolve) => {
+        let settled: boolean = false;
+        let pending: number = relays.length;
+        const sockets: WebSocket[] = [];
+
+        const closeAll = (): void => {
+            sockets.forEach((socket: WebSocket): void => {
+                if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+                    socket.close();
+                }
+            });
+        };
+
+        const finish = (profile: NostrProfile | null): void => {
+            if (settled) return;
+            settled = true;
+            closeAll();
+            resolve(profile);
+        };
+
+        relays.forEach((relayUrl: string): void => {
+            try {
+                const socket: WebSocket = new WebSocket(relayUrl);
+                sockets.push(socket);
+
+                const timeout = setTimeout((): void => {
+                    pending -= 1;
+                    if (pending <= 0) {
+                        finish(null);
+                    }
+                }, 4000);
+
                 socket.onopen = (): void => {
                     const subId: string = "profile-" + Math.random().toString(36).slice(2);
                     const req: [string, string, { kinds: number[]; authors: string[]; limit: number }] = [
@@ -20,30 +51,42 @@ export async function fetchProfile(pubkeyHex: PubkeyHex, relays: string[]): Prom
                 socket.onmessage = (msg: MessageEvent): void => {
                     const arr: any[] = JSON.parse(msg.data);
                     if (arr[0] === "EVENT" && arr[2]?.kind === 0) {
+                        clearTimeout(timeout);
                         try {
-                            profile = JSON.parse(arr[2].content);
+                            const profile: NostrProfile = JSON.parse(arr[2].content);
+                            finish(profile);
+                            return;
                         } catch (e) {
                             console.warn("Failed to parse profile JSON", e);
                         }
-                        socket.close();
-                        resolve();
-                    } else if (arr[0] === "EOSE") {
-                        socket.close();
-                        reject(new Error("No profile found"));
+                    }
+
+                    if (arr[0] === "EOSE") {
+                        clearTimeout(timeout);
+                        pending -= 1;
+                        if (pending <= 0) {
+                            finish(null);
+                        }
                     }
                 };
 
                 socket.onerror = (err: Event): void => {
                     console.error(`WebSocket error [${relayUrl}]`, err);
-                    reject(err);
+                    clearTimeout(timeout);
+                    pending -= 1;
+                    if (pending <= 0) {
+                        finish(null);
+                    }
                 };
-            });
-            break; // If success, stop trying others
-        } catch (e) {
-            console.warn(`Failed to fetch profile from ${relayUrl}, trying next...`);
-        }
-    }
-    return profile;
+            } catch (e) {
+                console.warn(`Failed to fetch profile from ${relayUrl}`, e);
+                pending -= 1;
+                if (pending <= 0) {
+                    finish(null);
+                }
+            }
+        });
+    });
 }
 
 export function renderProfile(pubkey: PubkeyHex, npub: Npub, profile: NostrProfile | null, profileSection: HTMLElement): void {

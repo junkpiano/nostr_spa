@@ -54,7 +54,6 @@ export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions)
     }
 
     if (options.output) {
-      options.output.innerHTML = "";
       options.seenEventIds.clear();
       const now: number = Math.floor(Date.now() / 1000);
       options.setUntilTimestamp(now);
