@@ -65,6 +65,7 @@ export function renderProfile(pubkey: PubkeyHex, npub: Npub, profile: NostrProfi
           onerror="this.src='https://placekitten.com/100/100';" />
         <h2 class="font-bold text-lg ${banner ? 'text-white drop-shadow-lg' : 'text-gray-900'}">${name}</h2>
         ${profile?.about ? `<p class="${banner ? 'text-white/90 drop-shadow' : 'text-gray-600'} text-sm mt-1 text-center max-w-2xl">${profile.about}</p>` : ""}
+        <div id="follow-action" class="mt-4"></div>
       </div>
     </div>
   `;

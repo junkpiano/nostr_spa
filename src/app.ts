@@ -1,24 +1,25 @@
 import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
 import { fetchProfile, renderProfile } from "./profile.js";
-import { loadEvents, loadGlobalTimeline, fetchFollowList, loadHomeTimeline } from "./events.js";
-import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
+import { loadEvents, loadGlobalTimeline, fetchFollowList, loadHomeTimeline, fetchEventById, renderEvent } from "./events.js";
+import { setupComposeOverlay } from "./compose.js";
+import { setupImageOverlay } from "./overlays.js";
+import { setEventMeta } from "./meta.js";
+import { getRelays, setRelays, normalizeRelayUrl } from "./relays.js";
+import { loadRelaysPage } from "./relays-page.js";
+import { clearSessionPrivateKey, getSessionPrivateKey, setSessionPrivateKeyFromRaw, updateLogoutButton } from "./session.js";
+import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
 const profileSection: HTMLElement | null = document.getElementById("profile-section");
+const composeButton: HTMLElement | null = document.getElementById("nav-compose");
 const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
 const connectingMsg: HTMLElement | null = document.getElementById("connecting-msg");
-const relays: string[] = ["wss://relay.snort.social",
-                "wss://relay.damus.io",
-                "wss://relay.primal.net",
-                "wss://nostr.wine",
-                "wss://nos.lol",
-                "wss://relay.nostr.band",
-                "wss://purplepag.es",
-                "wss://relay.nostr.wirednet.jp"];
+let relays: string[] = getRelays();
 const limit: number = 100;
 let seenEventIds: Set<string> = new Set();
 let untilTimestamp: number = Math.floor(Date.now() / 1000);
 let profile: NostrProfile | null = null;
+const homeKinds: number[] = [1, 2, 4, 9, 11, 22, 28, 40, 70, 77];
 
 // Cache for home timeline
 let cachedHomeTimeline: { events: any[]; followedPubkeys: string[]; timestamp: number } | null = null;
@@ -46,6 +47,9 @@ function closeAllWebSockets(): void {
   activeTimeouts = [];
 }
 
+function syncRelays(): void {
+  relays = getRelays();
+}
 document.addEventListener("DOMContentLoaded", (): void => {
   if (connectingMsg) {
     connectingMsg.style.display = "none"; // Hide connecting message by default
@@ -56,6 +60,24 @@ document.addEventListener("DOMContentLoaded", (): void => {
 
   // Setup navigation
   setupNavigation();
+
+  // Setup image overlay
+  setupImageOverlay();
+
+  // Setup composer overlay
+  setupComposeOverlay({
+    composeButton,
+    getSessionPrivateKey,
+    getRelays: (): string[] => relays,
+    publishEvent: publishEventToRelays,
+    refreshTimeline: async (): Promise<void> => {
+      if (window.location.pathname === "/home") {
+        await loadHomePage();
+      } else if (window.location.pathname === "/global") {
+        await loadGlobalPage();
+      }
+    },
+  });
 
   // Handle initial route
   handleRoute();
@@ -85,10 +107,43 @@ function handleRoute(): void {
     loadHomePage();
   } else if (path === "/global") {
     loadGlobalPage();
+  } else if (path === "/relays") {
+    loadRelaysPage({
+      closeAllWebSockets,
+      stopBackgroundFetch: (): void => {
+        if (backgroundFetchInterval) {
+          clearInterval(backgroundFetchInterval);
+          backgroundFetchInterval = null;
+        }
+      },
+      clearNotification: (): void => {
+        const notification = document.getElementById("new-posts-notification");
+        if (notification) {
+          notification.remove();
+        }
+      },
+      setActiveNav,
+      getRelays: (): string[] => relays,
+      setRelays: (list: string[]): void => {
+        setRelays(list);
+        syncRelays();
+      },
+      normalizeRelayUrl,
+      onRelaysChanged: syncRelays,
+      profileSection,
+      output,
+    });
   } else {
     // Try to parse as npub profile
     const npub: string = path.replace("/", "").trim();
-    if (npub.startsWith("npub")) {
+    if (npub.startsWith("nevent")) {
+      loadEventPage(npub);
+    } else if (npub.startsWith("npub")) {
+      const homeButton: HTMLElement | null = document.getElementById("nav-home");
+      const globalButton: HTMLElement | null = document.getElementById("nav-global");
+      const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+      const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+      setActiveNav(homeButton, globalButton, relaysButton, profileLink, profileLink);
       startApp(npub);
     } else {
       if (output) {
@@ -108,10 +163,12 @@ async function loadHomePage(): Promise<void> {
   // Set active navigation
   const homeButton: HTMLElement | null = document.getElementById("nav-home");
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  setActiveNav(homeButton, globalButton, homeButton);
+  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+  setActiveNav(homeButton, globalButton, relaysButton, profileLink, homeButton);
 
   // Update logout button visibility
-  updateLogoutButton();
+  updateLogoutButton(composeButton);
 
   if (storedPubkey) {
     // User is logged in, load their home timeline
@@ -140,12 +197,12 @@ async function loadHomePage(): Promise<void> {
       newestEventTimestamp = untilTimestamp;
 
       if (output) {
-        await loadHomeTimeline(cachedHomeTimeline.followedPubkeys, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
+        await loadHomeTimeline(cachedHomeTimeline.followedPubkeys, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
       }
 
       // Restart background fetching
       if (!backgroundFetchInterval) {
-        startBackgroundFetch(cachedHomeTimeline.followedPubkeys);
+      startBackgroundFetch(cachedHomeTimeline.followedPubkeys);
       }
     } else {
       // No cache, load fresh timeline
@@ -170,7 +227,9 @@ async function loadGlobalPage(): Promise<void> {
   // Set active navigation
   const homeButton: HTMLElement | null = document.getElementById("nav-home");
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  setActiveNav(homeButton, globalButton, globalButton);
+  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+  setActiveNav(homeButton, globalButton, relaysButton, profileLink, globalButton);
 
   // Stop background fetching when switching away from home timeline
   if (backgroundFetchInterval) {
@@ -208,6 +267,85 @@ async function loadGlobalPage(): Promise<void> {
   }
 }
 
+async function loadEventPage(nevent: string): Promise<void> {
+  // Close any active WebSocket connections from previous timeline
+  closeAllWebSockets();
+
+  // Stop background fetching when switching away from timelines
+  if (backgroundFetchInterval) {
+    clearInterval(backgroundFetchInterval);
+    backgroundFetchInterval = null;
+  }
+
+  // Remove new posts notification if exists
+  const notification = document.getElementById("new-posts-notification");
+  if (notification) {
+    notification.remove();
+  }
+
+  // Clear navigation highlight for event view
+  const homeButton: HTMLElement | null = document.getElementById("nav-home");
+  const globalButton: HTMLElement | null = document.getElementById("nav-global");
+  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+  setActiveNav(homeButton, globalButton, relaysButton, profileLink, null);
+
+  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+  if (postsHeader) {
+    postsHeader.textContent = "Event";
+    postsHeader.style.display = "";
+  }
+
+  if (profileSection) {
+    profileSection.innerHTML = "";
+    profileSection.className = "";
+  }
+
+  if (output) {
+    output.innerHTML = `
+      <div class="text-center py-12">
+        <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+        <p class="text-gray-700 font-semibold">Loading event...</p>
+      </div>
+    `;
+  }
+
+  try {
+    const decoded = nip19.decode(nevent);
+    if (decoded.type !== "nevent") {
+      throw new Error("Invalid nevent format");
+    }
+    const data: any = decoded.data;
+    const eventId: string | undefined = data?.id || (typeof data === "string" ? data : undefined);
+    const relayHints: string[] = Array.isArray(data?.relays) ? data.relays : [];
+
+    if (!eventId) {
+      throw new Error("Missing event id");
+    }
+
+    const relaysToUse: string[] = relayHints.length > 0 ? relayHints : relays;
+    const event = await fetchEventById(eventId, relaysToUse);
+
+    if (!output) return;
+    output.innerHTML = "";
+
+    if (!event) {
+      output.innerHTML = "<p class='text-red-500'>Event not found on the configured relays.</p>";
+      return;
+    }
+
+    const eventProfile: NostrProfile | null = await fetchProfile(event.pubkey, relaysToUse);
+    const npubStr: Npub = nip19.npubEncode(event.pubkey);
+    setEventMeta(event, npubStr);
+    renderEvent(event, eventProfile, npubStr, event.pubkey, output);
+  } catch (error: unknown) {
+    console.error("Failed to load nevent:", error);
+    if (output) {
+      output.innerHTML = "<p class='text-red-500'>Failed to load event.</p>";
+    }
+  }
+}
+
 async function startApp(npub: Npub): Promise<void> {
   let pubkeyHex: PubkeyHex;
   try {
@@ -224,6 +362,7 @@ async function startApp(npub: Npub): Promise<void> {
   if (profileSection) {
     renderProfile(pubkeyHex, npub, profile, profileSection);
   }
+  await setupFollowToggle(pubkeyHex);
   if (output) {
     await loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg);
   }
@@ -232,6 +371,128 @@ async function startApp(npub: Npub): Promise<void> {
   if (postsHeader) {
     postsHeader.style.display = "";
   }
+}
+
+async function setupFollowToggle(targetPubkey: PubkeyHex): Promise<void> {
+  const container: HTMLElement | null = document.getElementById("follow-action");
+  if (!container) return;
+
+  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+  if (!storedPubkey || storedPubkey === targetPubkey) {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `
+    <button id="follow-toggle" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow">
+      Follow
+    </button>
+  `;
+
+  const button: HTMLButtonElement | null = document.getElementById("follow-toggle") as HTMLButtonElement;
+  if (!button) return;
+
+  if (!(window as any).nostr || !(window as any).nostr.signEvent) {
+    button.textContent = "Follow (NIP-07 required)";
+    button.disabled = true;
+    button.classList.add("opacity-60", "cursor-not-allowed");
+    return;
+  }
+
+  let isFollowing: boolean = false;
+  let followList: PubkeyHex[] = [];
+
+  try {
+    followList = await fetchFollowList(storedPubkey as PubkeyHex, relays);
+    isFollowing = followList.includes(targetPubkey);
+  } catch (e) {
+    console.warn("Failed to load follow list for toggle", e);
+  }
+
+  const updateButton = (): void => {
+    if (isFollowing) {
+      button.textContent = "Unfollow";
+      button.className = "bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow";
+    } else {
+      button.textContent = "Follow";
+      button.className = "bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow";
+    }
+  };
+
+  updateButton();
+
+  button.addEventListener("click", async (): Promise<void> => {
+    button.disabled = true;
+    button.classList.add("opacity-60", "cursor-not-allowed");
+
+    try {
+      followList = await fetchFollowList(storedPubkey as PubkeyHex, relays);
+      const followSet: Set<PubkeyHex> = new Set(followList);
+      if (isFollowing) {
+        followSet.delete(targetPubkey);
+      } else {
+        followSet.add(targetPubkey);
+      }
+
+      const tags: string[][] = Array.from(followSet).map((pubkey: PubkeyHex): string[] => ["p", pubkey]);
+      const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
+        kind: 3,
+        pubkey: storedPubkey as PubkeyHex,
+        created_at: Math.floor(Date.now() / 1000),
+        tags,
+        content: "",
+      };
+
+      const signedEvent: NostrEvent = await (window as any).nostr.signEvent(unsignedEvent);
+      await publishEventToRelays(signedEvent, relays);
+
+      isFollowing = !isFollowing;
+      updateButton();
+    } catch (error: unknown) {
+      console.error("Failed to update follow list:", error);
+      alert("Failed to update follow list. Please try again.");
+    } finally {
+      button.disabled = false;
+      button.classList.remove("opacity-60", "cursor-not-allowed");
+    }
+  });
+}
+
+async function publishEventToRelays(event: NostrEvent, relayList: string[]): Promise<void> {
+  const promises = relayList.map(async (relayUrl: string): Promise<void> => {
+    try {
+      const socket: WebSocket = new WebSocket(relayUrl);
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          socket.close();
+          resolve();
+        }, 5000);
+
+        socket.onopen = (): void => {
+          socket.send(JSON.stringify(["EVENT", event]));
+        };
+
+        socket.onmessage = (msg: MessageEvent): void => {
+          const arr: any[] = JSON.parse(msg.data);
+          if (arr[0] === "OK") {
+            clearTimeout(timeout);
+            socket.close();
+            resolve();
+          }
+        };
+
+        socket.onerror = (): void => {
+          clearTimeout(timeout);
+          socket.close();
+          resolve();
+        };
+      });
+    } catch (e) {
+      console.warn(`Failed to publish follow event to ${relayUrl}:`, e);
+    }
+  });
+
+  await Promise.allSettled(promises);
 }
 
 async function showInputForm(): Promise<void> {
@@ -249,7 +510,7 @@ async function showInputForm(): Promise<void> {
     output.innerHTML = `
       <div class="text-center py-12">
         <h2 class="text-2xl font-bold text-gray-800 mb-4">Welcome to noxtr</h2>
-        <p class="text-gray-600 mb-6">Connect your Nostr extension to view your home timeline,<br/>or explore the global timeline.</p>
+        <p class="text-gray-600 mb-6">Connect your Nostr extension or use your private key to view your home timeline,<br/>or explore the global timeline.</p>
         <div class="flex flex-col sm:flex-row gap-4 justify-center items-center">
           <button id="welcome-login" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg">
             🔑 Connect Extension
@@ -258,12 +519,26 @@ async function showInputForm(): Promise<void> {
             🌍 View Global Timeline
           </button>
         </div>
+        <div class="mt-6 max-w-xl mx-auto text-left space-y-2">
+          <label for="private-key-input" class="block text-sm font-semibold text-gray-700">Private Key (nsec or 64 hex)</label>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input id="private-key-input" type="password" autocomplete="off" placeholder="nsec1... or hex"
+              class="border border-gray-300 rounded-lg px-4 py-2 w-full text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <button id="private-key-login"
+              class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-lg">
+              Use Private Key
+            </button>
+          </div>
+          <p class="text-xs text-gray-500">Private keys are not stored. We only derive your public key locally.</p>
+        </div>
       </div>
     `;
 
     // Add event listeners to welcome buttons
     const welcomeLoginBtn: HTMLElement | null = document.getElementById("welcome-login");
     const welcomeGlobalBtn: HTMLElement | null = document.getElementById("welcome-global");
+    const privateKeyLoginBtn: HTMLElement | null = document.getElementById("private-key-login");
+    const privateKeyInput: HTMLInputElement | null = document.getElementById("private-key-input") as HTMLInputElement;
 
     if (welcomeLoginBtn) {
       welcomeLoginBtn.addEventListener("click", async (): Promise<void> => {
@@ -284,9 +559,10 @@ async function showInputForm(): Promise<void> {
 
           // Store pubkey in localStorage
           localStorage.setItem("nostr_pubkey", pubkeyHex);
+          clearSessionPrivateKey();
 
           // Update logout button visibility
-          updateLogoutButton();
+          updateLogoutButton(composeButton);
 
           // Navigate to home
           window.history.pushState(null, "", "/home");
@@ -306,6 +582,41 @@ async function showInputForm(): Promise<void> {
       welcomeGlobalBtn.addEventListener("click", (): void => {
         window.history.pushState(null, "", "/global");
         handleRoute();
+      });
+    }
+
+    if (privateKeyLoginBtn) {
+      privateKeyLoginBtn.addEventListener("click", (): void => {
+        try {
+          if (!privateKeyInput) return;
+          const rawKey: string = privateKeyInput.value.trim();
+          if (!rawKey) {
+            alert("Please enter your private key.");
+            return;
+          }
+          const pubkeyHex: PubkeyHex = setSessionPrivateKeyFromRaw(rawKey);
+          localStorage.setItem("nostr_pubkey", pubkeyHex);
+          privateKeyInput.value = "";
+          updateLogoutButton(composeButton);
+          window.history.pushState(null, "", "/home");
+          handleRoute();
+        } catch (error: unknown) {
+          console.error("Private key login error:", error);
+          clearSessionPrivateKey();
+          if (error instanceof Error) {
+            alert(`Failed to use private key: ${error.message}`);
+          } else {
+            alert("Failed to use private key.");
+          }
+        }
+      });
+    }
+
+    if (privateKeyInput) {
+      privateKeyInput.addEventListener("keypress", (e: KeyboardEvent): void => {
+        if (e.key === "Enter" && privateKeyLoginBtn) {
+          privateKeyLoginBtn.click();
+        }
       });
     }
   }
@@ -380,6 +691,8 @@ function setupSearchBar(): void {
         postsHeader.textContent = "Global Timeline";
       } else if (path === "/home") {
         postsHeader.textContent = "Home Timeline";
+      } else if (path === "/relays") {
+        postsHeader.textContent = "Relay Management";
       } else {
         postsHeader.textContent = "Posts:";
       }
@@ -411,6 +724,7 @@ function setupSearchBar(): void {
   }
 }
 
+
 async function loadUserHomeTimeline(pubkeyHex: PubkeyHex): Promise<void> {
   try {
     // Show loading state
@@ -437,10 +751,10 @@ async function loadUserHomeTimeline(pubkeyHex: PubkeyHex): Promise<void> {
       profileSection.className = "";
     }
 
-    // Fetch follow list
+    // Fetch follow list (kind 3) from relays
     const followedPubkeys: PubkeyHex[] = await fetchFollowList(pubkeyHex, relays);
+    const followedWithSelf: PubkeyHex[] = Array.from(new Set([...followedPubkeys, pubkeyHex]));
 
-    // Update loading message
     if (output) {
       output.innerHTML = `
         <div class="text-center py-12">
@@ -460,17 +774,17 @@ async function loadUserHomeTimeline(pubkeyHex: PubkeyHex): Promise<void> {
       seenEventIds.clear();
       untilTimestamp = Math.floor(Date.now() / 1000);
       newestEventTimestamp = untilTimestamp;
-      await loadHomeTimeline(followedPubkeys, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
+      await loadHomeTimeline(followedWithSelf, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
 
       // Cache the timeline
       cachedHomeTimeline = {
         events: Array.from(seenEventIds),
-        followedPubkeys: followedPubkeys,
+        followedPubkeys: followedWithSelf,
         timestamp: Date.now()
       };
 
       // Start background fetching for new posts
-      startBackgroundFetch(followedPubkeys);
+      startBackgroundFetch(followedWithSelf);
     }
   } catch (error: unknown) {
     console.error("Error loading home timeline:", error);
@@ -522,7 +836,7 @@ async function fetchNewPosts(followedPubkeys: PubkeyHex[]): Promise<void> {
           const req = [
             "REQ", subId,
             {
-              kinds: [1],
+              kinds: homeKinds,
               authors: followedPubkeys,
               since: since,
               limit: 20
@@ -592,7 +906,7 @@ function showNewPostsNotification(count: number): void {
 
         const followedPubkeys = cachedHomeTimeline?.followedPubkeys || [];
         if (followedPubkeys.length > 0 && output) {
-          await loadHomeTimeline(followedPubkeys, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
+          await loadHomeTimeline(followedPubkeys, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
         }
       }
     });
@@ -608,7 +922,13 @@ function showNewPostsNotification(count: number): void {
 }
 
 // Set active navigation button
-function setActiveNav(homeButton: HTMLElement | null, globalButton: HTMLElement | null, activeButton: HTMLElement | null): void {
+function setActiveNav(
+  homeButton: HTMLElement | null,
+  globalButton: HTMLElement | null,
+  relaysButton: HTMLElement | null,
+  profileLink: HTMLElement | null,
+  activeButton: HTMLElement | null
+): void {
   // Remove active state from all buttons
   if (homeButton) {
     homeButton.classList.remove("bg-indigo-100", "text-indigo-700");
@@ -618,31 +938,27 @@ function setActiveNav(homeButton: HTMLElement | null, globalButton: HTMLElement 
     globalButton.classList.remove("bg-indigo-100", "text-indigo-700");
     globalButton.classList.add("text-gray-700");
   }
+  if (relaysButton) {
+    relaysButton.classList.remove("bg-indigo-100", "text-indigo-700");
+    relaysButton.classList.add("text-gray-700");
+  }
+  if (profileLink) {
+    profileLink.classList.remove("bg-indigo-100", "text-indigo-700");
+    profileLink.classList.add("text-gray-700");
+  }
 
   // Add active state to the clicked button
   if (activeButton) {
     activeButton.classList.remove("text-gray-700");
     activeButton.classList.add("bg-indigo-100", "text-indigo-700");
   }
-}
 
-// Update logout button visibility based on login state
-function updateLogoutButton(): void {
-  const logoutButton: HTMLElement | null = document.getElementById("nav-logout");
-  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
-
-  if (logoutButton) {
-    if (storedPubkey) {
-      logoutButton.style.display = "";
-    } else {
-      logoutButton.style.display = "none";
-    }
-  }
 }
 
 function setupNavigation(): void {
   const homeButton: HTMLElement | null = document.getElementById("nav-home");
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
+  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const logoutButton: HTMLElement | null = document.getElementById("nav-logout");
 
   if (homeButton) {
@@ -659,10 +975,18 @@ function setupNavigation(): void {
     });
   }
 
+  if (relaysButton) {
+    relaysButton.addEventListener("click", (): void => {
+      window.history.pushState(null, "", "/relays");
+      handleRoute();
+    });
+  }
+
   if (logoutButton) {
     logoutButton.addEventListener("click", (): void => {
       // Clear login session
       localStorage.removeItem("nostr_pubkey");
+      clearSessionPrivateKey();
 
       // Clear cache
       cachedHomeTimeline = null;
@@ -680,7 +1004,7 @@ function setupNavigation(): void {
       }
 
       // Update logout button visibility
-      updateLogoutButton();
+      updateLogoutButton(composeButton);
 
       // Navigate to home (will show welcome screen since not logged in)
       window.history.pushState(null, "", "/home");
@@ -689,6 +1013,5 @@ function setupNavigation(): void {
   }
 
   // Initial update of logout button
-  updateLogoutButton();
+  updateLogoutButton(composeButton);
 }
-
