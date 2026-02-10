@@ -355,6 +355,9 @@ async function startApp(npub: Npub): Promise<void> {
   let pubkeyHex: PubkeyHex;
   try {
     const decoded = nip19.decode(npub);
+    if (decoded.type !== "npub" || typeof decoded.data !== "string") {
+      throw new Error("Invalid npub address");
+    }
     pubkeyHex = decoded.data;
   } catch (e) {
     if (output) {

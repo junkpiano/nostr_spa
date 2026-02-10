@@ -16,7 +16,9 @@ export function setupImageOverlay(): void {
 
   const updateOverlay = (): void => {
     if (images.length === 0) return;
-    overlayImg.src = images[currentIndex];
+    const currentImage: string | undefined = images[currentIndex];
+    if (!currentImage) return;
+    overlayImg.src = currentImage;
     overlayCount.textContent = `${currentIndex + 1} / ${images.length}`;
     prevBtn.style.display = images.length > 1 ? "" : "none";
     nextBtn.style.display = images.length > 1 ? "" : "none";
