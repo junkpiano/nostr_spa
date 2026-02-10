@@ -1,15 +1,17 @@
 import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
 import { fetchProfile, renderProfile } from "./profile.js";
-import { loadEvents, loadGlobalTimeline, fetchFollowList, loadHomeTimeline, fetchEventById, isEventDeleted, renderEvent } from "./events.js";
+import { loadEvents, loadGlobalTimeline, loadHomeTimeline } from "./events.js";
 import { setupComposeOverlay } from "./compose.js";
 import { setupImageOverlay } from "./overlays.js";
-import { setEventMeta } from "./meta.js";
 import { getRelays, setRelays, normalizeRelayUrl } from "./relays.js";
 import { loadRelaysPage } from "./relays-page.js";
 import { setupFollowToggle, publishEventToRelays } from "./follow.js";
 import { setupSearchBar } from "./search.js";
 import { setupNavigation, setActiveNav } from "./navigation.js";
 import { clearSessionPrivateKey, getSessionPrivateKey, setSessionPrivateKeyFromRaw, updateLogoutButton } from "./session.js";
+import { showInputForm } from "./welcome.js";
+import { loadEventPage } from "./event-page.js";
+import { loadUserHomeTimeline } from "./home-loader.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
@@ -142,7 +144,25 @@ function handleRoute(): void {
     // Try to parse as npub profile
     const npub: string = path.replace("/", "").trim();
     if (npub.startsWith("nevent")) {
-      loadEventPage(npub);
+      loadEventPage({
+        nevent: npub,
+        relays,
+        output,
+        profileSection,
+        closeAllWebSockets,
+        stopBackgroundFetch: (): void => {
+          if (backgroundFetchInterval) {
+            clearInterval(backgroundFetchInterval);
+            backgroundFetchInterval = null;
+          }
+        },
+        clearNotification: (): void => {
+          const notification = document.getElementById("new-posts-notification");
+          if (notification) {
+            notification.remove();
+          }
+        },
+      });
     } else if (npub.startsWith("npub")) {
       const homeButton: HTMLElement | null = document.getElementById("nav-home");
       const globalButton: HTMLElement | null = document.getElementById("nav-global");
@@ -216,11 +236,44 @@ async function loadHomePage(): Promise<void> {
       }
       seenEventIds.clear();
       untilTimestamp = Math.floor(Date.now() / 1000);
-      await loadUserHomeTimeline(storedPubkey);
+      await loadUserHomeTimeline({
+        pubkeyHex: storedPubkey as PubkeyHex,
+        relays,
+        output,
+        profileSection,
+        connectingMsg,
+        homeKinds,
+        limit,
+        seenEventIds,
+        activeWebSockets,
+        activeTimeouts,
+        setUntilTimestamp: (value: number): void => {
+          untilTimestamp = value;
+        },
+        setNewestEventTimestamp: (value: number): void => {
+          newestEventTimestamp = value;
+        },
+        setCachedHomeTimeline: (followedWithSelf: PubkeyHex[], seen: Set<string>): void => {
+          cachedHomeTimeline = {
+            events: Array.from(seen),
+            followedPubkeys: followedWithSelf,
+            timestamp: Date.now(),
+          };
+        },
+        startBackgroundFetch,
+      });
     }
   } else {
     // User not logged in, show welcome screen
-    showInputForm();
+    showInputForm({
+      output,
+      profileSection,
+      composeButton,
+      updateLogoutButton,
+      clearSessionPrivateKey,
+      setSessionPrivateKeyFromRaw,
+      handleRoute,
+    });
   }
 }
 
@@ -269,91 +322,6 @@ async function loadGlobalPage(): Promise<void> {
   untilTimestamp = Math.floor(Date.now() / 1000);
   if (output) {
     await loadGlobalTimeline(relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
-  }
-}
-
-async function loadEventPage(nevent: string): Promise<void> {
-  // Close any active WebSocket connections from previous timeline
-  closeAllWebSockets();
-
-  // Stop background fetching when switching away from timelines
-  if (backgroundFetchInterval) {
-    clearInterval(backgroundFetchInterval);
-    backgroundFetchInterval = null;
-  }
-
-  // Remove new posts notification if exists
-  const notification = document.getElementById("new-posts-notification");
-  if (notification) {
-    notification.remove();
-  }
-
-  // Clear navigation highlight for event view
-  const homeButton: HTMLElement | null = document.getElementById("nav-home");
-  const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
-  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  setActiveNav(homeButton, globalButton, relaysButton, profileLink, null);
-
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
-  if (postsHeader) {
-    postsHeader.textContent = "Event";
-    postsHeader.style.display = "";
-  }
-
-  if (profileSection) {
-    profileSection.innerHTML = "";
-    profileSection.className = "";
-  }
-
-  if (output) {
-    output.innerHTML = `
-      <div class="text-center py-12">
-        <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-        <p class="text-gray-700 font-semibold">Loading event...</p>
-      </div>
-    `;
-  }
-
-  try {
-    const decoded = nip19.decode(nevent);
-    if (decoded.type !== "nevent") {
-      throw new Error("Invalid nevent format");
-    }
-    const data: any = decoded.data;
-    const eventId: string | undefined = data?.id || (typeof data === "string" ? data : undefined);
-    const relayHints: string[] = Array.isArray(data?.relays) ? data.relays : [];
-
-    if (!eventId) {
-      throw new Error("Missing event id");
-    }
-
-    const relaysToUse: string[] = relayHints.length > 0 ? relayHints : relays;
-    const event = await fetchEventById(eventId, relaysToUse);
-
-    if (!output) return;
-    output.innerHTML = "";
-
-    if (!event) {
-      output.innerHTML = "<p class='text-red-500'>Event not found on the configured relays.</p>";
-      return;
-    }
-
-    const deleted: boolean = await isEventDeleted(event.id, event.pubkey as PubkeyHex, relaysToUse);
-    if (deleted) {
-      output.innerHTML = "<p class='text-gray-600'>This event was deleted by the author.</p>";
-      return;
-    }
-
-    const eventProfile: NostrProfile | null = await fetchProfile(event.pubkey, relaysToUse);
-    const npubStr: Npub = nip19.npubEncode(event.pubkey);
-    setEventMeta(event, npubStr);
-    renderEvent(event, eventProfile, npubStr, event.pubkey, output);
-  } catch (error: unknown) {
-    console.error("Failed to load nevent:", error);
-    if (output) {
-      output.innerHTML = "<p class='text-red-500'>Failed to load event.</p>";
-    }
   }
 }
 
@@ -410,211 +378,6 @@ function handleLogout(): void {
   }
 
   updateLogoutButton(composeButton);
-}
-
-async function showInputForm(): Promise<void> {
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
-  if (postsHeader) {
-    postsHeader.style.display = "none";
-  }
-
-  if (profileSection) {
-    profileSection.innerHTML = "";
-    profileSection.className = ""; // Remove all spacing classes
-  }
-
-  if (output) {
-    output.innerHTML = `
-      <div class="text-center py-12">
-        <h2 class="text-2xl font-bold text-gray-800 mb-4">Welcome to noxtr</h2>
-        <p class="text-gray-600 mb-6">Connect your Nostr extension or use your private key to view your home timeline,<br/>or explore the global timeline.</p>
-        <div class="flex flex-col sm:flex-row gap-4 justify-center items-center">
-          <button id="welcome-login" class="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg">
-            🔑 Connect Extension
-          </button>
-          <button id="welcome-global" class="bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-3 px-6 rounded-lg transition-colors shadow-lg">
-            🌍 View Global Timeline
-          </button>
-        </div>
-        <div class="mt-6 max-w-xl mx-auto text-left space-y-2">
-          <label for="private-key-input" class="block text-sm font-semibold text-gray-700">Private Key (nsec or 64 hex)</label>
-          <div class="flex flex-col sm:flex-row gap-2">
-            <input id="private-key-input" type="password" autocomplete="off" placeholder="nsec1... or hex"
-              class="border border-gray-300 rounded-lg px-4 py-2 w-full text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <button id="private-key-login"
-              class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-lg">
-              Use Private Key
-            </button>
-          </div>
-          <p class="text-xs text-gray-500">Private keys are not stored. We only derive your public key locally.</p>
-        </div>
-      </div>
-    `;
-
-    // Add event listeners to welcome buttons
-    const welcomeLoginBtn: HTMLElement | null = document.getElementById("welcome-login");
-    const welcomeGlobalBtn: HTMLElement | null = document.getElementById("welcome-global");
-    const privateKeyLoginBtn: HTMLElement | null = document.getElementById("private-key-login");
-    const privateKeyInput: HTMLInputElement | null = document.getElementById("private-key-input") as HTMLInputElement;
-
-    if (welcomeLoginBtn) {
-      welcomeLoginBtn.addEventListener("click", async (): Promise<void> => {
-        try {
-          // Check if window.nostr is available (NIP-07)
-          if (!(window as any).nostr) {
-            alert("No Nostr extension found!\n\nPlease install a Nostr browser extension like:\n- Alby (getalby.com)\n- nos2x\n- Flamingo\n\nThen reload this page.");
-            return;
-          }
-
-          // Get public key from extension
-          const pubkeyHex: string = await (window as any).nostr.getPublicKey();
-
-          if (!pubkeyHex) {
-            alert("Failed to get public key from extension.");
-            return;
-          }
-
-          // Store pubkey in localStorage
-          localStorage.setItem("nostr_pubkey", pubkeyHex);
-          clearSessionPrivateKey();
-
-          // Update logout button visibility
-          updateLogoutButton(composeButton);
-
-          // Navigate to home
-          window.history.pushState(null, "", "/home");
-          handleRoute();
-        } catch (error: unknown) {
-          console.error("Extension login error:", error);
-          if (error instanceof Error) {
-            alert(`Failed to connect with extension: ${error.message}`);
-          } else {
-            alert("Failed to connect with extension. Please make sure your extension is unlocked and try again.");
-          }
-        }
-      });
-    }
-
-    if (welcomeGlobalBtn) {
-      welcomeGlobalBtn.addEventListener("click", (): void => {
-        window.history.pushState(null, "", "/global");
-        handleRoute();
-      });
-    }
-
-    if (privateKeyLoginBtn) {
-      privateKeyLoginBtn.addEventListener("click", (): void => {
-        try {
-          if (!privateKeyInput) return;
-          const rawKey: string = privateKeyInput.value.trim();
-          if (!rawKey) {
-            alert("Please enter your private key.");
-            return;
-          }
-          const pubkeyHex: PubkeyHex = setSessionPrivateKeyFromRaw(rawKey);
-          localStorage.setItem("nostr_pubkey", pubkeyHex);
-          privateKeyInput.value = "";
-          updateLogoutButton(composeButton);
-          window.history.pushState(null, "", "/home");
-          handleRoute();
-        } catch (error: unknown) {
-          console.error("Private key login error:", error);
-          clearSessionPrivateKey();
-          if (error instanceof Error) {
-            alert(`Failed to use private key: ${error.message}`);
-          } else {
-            alert("Failed to use private key.");
-          }
-        }
-      });
-    }
-
-    if (privateKeyInput) {
-      privateKeyInput.addEventListener("keypress", (e: KeyboardEvent): void => {
-        if (e.key === "Enter" && privateKeyLoginBtn) {
-          privateKeyLoginBtn.click();
-        }
-      });
-    }
-  }
-}
-
-async function loadUserHomeTimeline(pubkeyHex: PubkeyHex): Promise<void> {
-  try {
-    // Show loading state
-    if (output) {
-      output.innerHTML = `
-        <div class="text-center py-12">
-          <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-          <p class="text-gray-700 font-semibold">Fetching your follow list...</p>
-          <p class="text-gray-500 text-sm mt-2">This may take a few seconds</p>
-        </div>
-      `;
-    }
-
-    // Update header
-    const postsHeader: HTMLElement | null = document.getElementById("posts-header");
-    if (postsHeader) {
-      postsHeader.textContent = "Home Timeline";
-      postsHeader.style.display = "";
-    }
-
-    // Clear profile section
-    if (profileSection) {
-      profileSection.innerHTML = "";
-      profileSection.className = "";
-    }
-
-    // Fetch follow list (kind 3) from relays
-    const followedPubkeys: PubkeyHex[] = await fetchFollowList(pubkeyHex, relays);
-    const followedWithSelf: PubkeyHex[] = Array.from(new Set([...followedPubkeys, pubkeyHex]));
-
-    if (output) {
-      output.innerHTML = `
-        <div class="text-center py-12">
-          <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-          <p class="text-gray-700 font-semibold">Loading posts from ${followedPubkeys.length} people...</p>
-        </div>
-      `;
-    }
-
-    // Clear output before loading timeline
-    if (output) {
-      output.innerHTML = "";
-    }
-
-    // Load home timeline
-    if (output) {
-      seenEventIds.clear();
-      untilTimestamp = Math.floor(Date.now() / 1000);
-      newestEventTimestamp = untilTimestamp;
-      await loadHomeTimeline(followedWithSelf, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
-
-      // Cache the timeline
-      cachedHomeTimeline = {
-        events: Array.from(seenEventIds),
-        followedPubkeys: followedWithSelf,
-        timestamp: Date.now()
-      };
-
-      // Start background fetching for new posts
-      startBackgroundFetch(followedWithSelf);
-    }
-  } catch (error: unknown) {
-    console.error("Error loading home timeline:", error);
-    // Clear stored session on error
-    localStorage.removeItem("nostr_pubkey");
-
-    if (output) {
-      output.innerHTML = `
-        <div class="text-center py-8">
-          <p class="text-red-600 mb-4">Failed to load home timeline.</p>
-          <p class="text-gray-600 text-sm mb-4">Please try connecting your extension again.</p>
-        </div>
-      `;
-    }
-    throw error;
-  }
 }
 
 function startBackgroundFetch(followedPubkeys: PubkeyHex[]): void {

@@ -1,5 +1,8 @@
 import type { NostrProfile, PubkeyHex, Npub, OGPResponse } from "../types/nostr";
 
+const ogpCache: Map<string, Promise<OGPResponse | null>> = new Map();
+const twitterEmbedCache: Map<string, Promise<string | null>> = new Map();
+
 export function shortenNpub(npub: Npub): string {
     return npub.slice(0, 12) + "...";
 }
@@ -37,6 +40,12 @@ export function isTwitterURL(url: string): boolean {
  * @returns Promise resolving to oEmbed HTML string, or null if fetch fails
  */
 export async function fetchTwitterEmbed(url: string): Promise<string | null> {
+    const cached: Promise<string | null> | undefined = twitterEmbedCache.get(url);
+    if (cached) {
+        return cached;
+    }
+
+    const request: Promise<string | null> = (async (): Promise<string | null> => {
     try {
         const encodedURL: string = encodeURIComponent(url);
         const oembedURL: string = `https://publish.twitter.com/oembed?url=${encodedURL}&theme=light&dnt=true`;
@@ -54,6 +63,10 @@ export async function fetchTwitterEmbed(url: string): Promise<string | null> {
         console.error(`Error fetching Twitter embed for ${url}:`, error);
         return null;
     }
+    })();
+
+    twitterEmbedCache.set(url, request);
+    return request;
 }
 
 /**
@@ -78,6 +91,12 @@ export function loadTwitterWidgets(): void {
  * @returns Promise resolving to OGP response object, or null if fetch fails
  */
 export async function fetchOGP(url: string): Promise<OGPResponse | null> {
+    const cached: Promise<OGPResponse | null> | undefined = ogpCache.get(url);
+    if (cached) {
+        return cached;
+    }
+
+    const request: Promise<OGPResponse | null> = (async (): Promise<OGPResponse | null> => {
     try {
         const encodedURL: string = encodeURIComponent(url);
         const apiURL: string = `https://proxy.yusuke.cloud/api/ogp?url=${encodedURL}`;
@@ -95,4 +114,8 @@ export async function fetchOGP(url: string): Promise<OGPResponse | null> {
         console.error(`Error fetching OGP for ${url}:`, error);
         return null;
     }
+    })();
+
+    ogpCache.set(url, request);
+    return request;
 }
