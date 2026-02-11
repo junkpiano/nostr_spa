@@ -126,7 +126,11 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         clearError();
         if (index <= 0) return;
         const reordered: string[] = [...currentRelays];
-        [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+        const above: string | undefined = reordered[index - 1];
+        const current: string | undefined = reordered[index];
+        if (!above || !current) return;
+        reordered[index - 1] = current;
+        reordered[index] = above;
         currentRelays = reordered;
         options.setRelays(currentRelays);
         options.onRelaysChanged();
@@ -144,7 +148,11 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         clearError();
         if (index >= currentRelays.length - 1) return;
         const reordered: string[] = [...currentRelays];
-        [reordered[index + 1], reordered[index]] = [reordered[index], reordered[index + 1]];
+        const below: string | undefined = reordered[index + 1];
+        const current: string | undefined = reordered[index];
+        if (!below || !current) return;
+        reordered[index + 1] = current;
+        reordered[index] = below;
         currentRelays = reordered;
         options.setRelays(currentRelays);
         options.onRelaysChanged();
