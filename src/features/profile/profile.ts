@@ -1,4 +1,6 @@
 import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
+import { createRelayWebSocket } from "../../common/relay-socket.js";
+import { recordRelayFailure } from "../relays/relays.js";
 import { getCachedProfile, setCachedProfile } from "./profile-cache.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../../../types/nostr";
 
@@ -7,6 +9,12 @@ interface FetchProfileOptions {
     persistProfile?: boolean;
 }
 
+const PROFILE_MEM_CACHE_TTL_MS: number = 5 * 60 * 1000;
+const PROFILE_RETRY_INTERVAL_MS: number = 30 * 1000;
+const profileMemoryCache: Map<PubkeyHex, { profile: NostrProfile | null; expiresAt: number }> = new Map();
+const profileInFlight: Map<PubkeyHex, Promise<NostrProfile | null>> = new Map();
+const profileLastAttempt: Map<PubkeyHex, number> = new Map();
+
 export async function fetchProfile(
     pubkeyHex: PubkeyHex,
     relays: string[],
@@ -14,10 +22,17 @@ export async function fetchProfile(
 ): Promise<NostrProfile | null> {
     const usePersistentCache: boolean = options.usePersistentCache !== false;
     const persistProfile: boolean = options.persistProfile !== false;
+    const now: number = Date.now();
+
+    const cachedMem: { profile: NostrProfile | null; expiresAt: number } | undefined = profileMemoryCache.get(pubkeyHex);
+    if (cachedMem && cachedMem.expiresAt > now) {
+        return cachedMem.profile;
+    }
 
     if (usePersistentCache) {
         const cachedProfile: NostrProfile | null = getCachedProfile(pubkeyHex);
         if (cachedProfile) {
+            profileMemoryCache.set(pubkeyHex, { profile: cachedProfile, expiresAt: now + PROFILE_MEM_CACHE_TTL_MS });
             return cachedProfile;
         }
     }
@@ -26,90 +41,94 @@ export async function fetchProfile(
         return null;
     }
 
-    return await new Promise<NostrProfile | null>((resolve) => {
-        let settled: boolean = false;
-        let pending: number = relays.length;
-        const sockets: WebSocket[] = [];
+    const existing: Promise<NostrProfile | null> | undefined = profileInFlight.get(pubkeyHex);
+    if (existing) {
+        return await existing;
+    }
 
-        const closeAll = (): void => {
-            sockets.forEach((socket: WebSocket): void => {
-                if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-                    socket.close();
-                }
-            });
-        };
+    const lastAttempt: number | undefined = profileLastAttempt.get(pubkeyHex);
+    if (lastAttempt && now - lastAttempt < PROFILE_RETRY_INTERVAL_MS) {
+        return null;
+    }
+    profileLastAttempt.set(pubkeyHex, now);
 
-        const finish = (profile: NostrProfile | null): void => {
-            if (settled) return;
-            settled = true;
-            closeAll();
-            resolve(profile);
-        };
-
-        relays.forEach((relayUrl: string): void => {
+    const request: Promise<NostrProfile | null> = (async (): Promise<NostrProfile | null> => {
+        for (const relayUrl of relays) {
             try {
-                const socket: WebSocket = new WebSocket(relayUrl);
-                sockets.push(socket);
+                const profile: NostrProfile | null = await new Promise<NostrProfile | null>((resolve) => {
+                    let settled: boolean = false;
+                    const socket: WebSocket = createRelayWebSocket(relayUrl);
 
-                const timeout = setTimeout((): void => {
-                    pending -= 1;
-                    if (pending <= 0) {
-                        finish(null);
-                    }
-                }, 4000);
-
-                socket.onopen = (): void => {
-                    const subId: string = "profile-" + Math.random().toString(36).slice(2);
-                    const req: [string, string, { kinds: number[]; authors: string[]; limit: number }] = [
-                        "REQ",
-                        subId,
-                        { kinds: [0], authors: [pubkeyHex], limit: 1 }
-                    ];
-                    socket.send(JSON.stringify(req));
+                const finish = (value: NostrProfile | null): void => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    socket.close();
+                    resolve(value);
                 };
 
-                socket.onmessage = (msg: MessageEvent): void => {
-                    const arr: any[] = JSON.parse(msg.data);
-                    if (arr[0] === "EVENT" && arr[2]?.kind === 0) {
-                        clearTimeout(timeout);
-                        try {
-                            const profile: NostrProfile = JSON.parse(arr[2].content);
-                            if (persistProfile) {
-                                setCachedProfile(pubkeyHex, profile);
-                            }
-                            finish(profile);
-                            return;
-                        } catch (e) {
-                            console.warn("Failed to parse profile JSON", e);
-                        }
-                    }
+                    const timeout = setTimeout((): void => {
+                        recordRelayFailure(relayUrl);
+                        finish(null);
+                    }, 5000);
 
-                    if (arr[0] === "EOSE") {
-                        clearTimeout(timeout);
-                        pending -= 1;
-                        if (pending <= 0) {
+                    socket.onopen = (): void => {
+                        const subId: string = "profile-" + Math.random().toString(36).slice(2);
+                        const req: [string, string, { kinds: number[]; authors: string[]; limit: number }] = [
+                            "REQ",
+                            subId,
+                            { kinds: [0], authors: [pubkeyHex], limit: 1 }
+                        ];
+                        socket.send(JSON.stringify(req));
+                    };
+
+                    socket.onmessage = (msg: MessageEvent): void => {
+                        const arr: any[] = JSON.parse(msg.data);
+                        if (arr[0] === "EVENT" && arr[2]?.kind === 0) {
+                            try {
+                                const parsed: NostrProfile = JSON.parse(arr[2].content);
+                                finish(parsed);
+                                return;
+                            } catch (e) {
+                                console.warn("Failed to parse profile JSON", e);
+                            }
+                        }
+
+                        if (arr[0] === "EOSE") {
                             finish(null);
                         }
-                    }
-                };
+                    };
 
-                socket.onerror = (err: Event): void => {
-                    console.error(`WebSocket error [${relayUrl}]`, err);
-                    clearTimeout(timeout);
-                    pending -= 1;
-                    if (pending <= 0) {
+                    socket.onerror = (err: Event): void => {
+                        console.error(`WebSocket error [${relayUrl}]`, err);
                         finish(null);
+                    };
+                });
+
+                if (profile) {
+                    if (persistProfile) {
+                        setCachedProfile(pubkeyHex, profile);
                     }
-                };
+                    profileMemoryCache.set(pubkeyHex, {
+                        profile,
+                        expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS,
+                    });
+                    return profile;
+                }
             } catch (e) {
                 console.warn(`Failed to fetch profile from ${relayUrl}`, e);
-                pending -= 1;
-                if (pending <= 0) {
-                    finish(null);
-                }
             }
-        });
-    });
+        }
+        profileMemoryCache.set(pubkeyHex, { profile: null, expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS });
+        return null;
+    })();
+
+    profileInFlight.set(pubkeyHex, request);
+    try {
+        return await request;
+    } finally {
+        profileInFlight.delete(pubkeyHex);
+    }
 }
 
 export function renderProfile(pubkey: PubkeyHex, npub: Npub, profile: NostrProfile | null, profileSection: HTMLElement): void {

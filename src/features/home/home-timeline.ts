@@ -3,6 +3,7 @@ import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
 import { fetchProfile } from "../profile/profile.js";
 import { renderEvent } from "../../common/event-render.js";
 import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
+import { createRelayWebSocket } from "../../common/relay-socket.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
 
 export async function loadHomeTimeline(
@@ -16,7 +17,12 @@ export async function loadHomeTimeline(
   connectingMsg: HTMLElement | null,
   activeWebSockets: WebSocket[] = [],
   activeTimeouts: number[] = [],
+  isRouteActive?: () => boolean,
 ): Promise<void> {
+  const routeIsActive: () => boolean = isRouteActive || (() => true);
+  if (!routeIsActive()) {
+    return;
+  }
   let flushScheduled: boolean = false;
   let pendingRelays: number = relays.length;
   const bufferedEvents: NostrEvent[] = [];
@@ -47,6 +53,9 @@ export async function loadHomeTimeline(
   }
 
   const flushBufferedEvents = (): void => {
+    if (!routeIsActive()) {
+      return;
+    }
     bufferedEvents.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
 
     if (!clearedPlaceholder && bufferedEvents.length > 0) {
@@ -104,6 +113,9 @@ export async function loadHomeTimeline(
   };
 
   const finalizeLoading = (): void => {
+    if (!routeIsActive()) {
+      return;
+    }
     if (finalized) {
       return;
     }
@@ -138,10 +150,14 @@ export async function loadHomeTimeline(
   };
 
   for (const relayUrl of relays) {
-    const socket: WebSocket = new WebSocket(relayUrl);
+    const socket: WebSocket = createRelayWebSocket(relayUrl);
     activeWebSockets.push(socket);
 
     socket.onopen = (): void => {
+      if (!routeIsActive()) {
+        socket.close();
+        return;
+      }
       const subId: string = "home-" + Math.random().toString(36).slice(2);
       const req: [string, string, { kinds: number[]; authors: string[]; until: number; limit: number }] = [
         "REQ",
@@ -157,6 +173,9 @@ export async function loadHomeTimeline(
     };
 
     socket.onmessage = async (msg: MessageEvent): Promise<void> => {
+      if (!routeIsActive()) {
+        return;
+      }
       const arr: any[] = JSON.parse(msg.data);
       if (arr[0] === "EVENT") {
         const event: NostrEvent = arr[2];
@@ -181,6 +200,9 @@ export async function loadHomeTimeline(
     };
 
     socket.onerror = (err: Event): void => {
+      if (!routeIsActive()) {
+        return;
+      }
       console.error(`WebSocket error [${relayUrl}]`, err);
       if (connectingMsg) {
         connectingMsg.style.display = "none";
@@ -203,7 +225,19 @@ export async function loadHomeTimeline(
     const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
     loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
     newLoadMoreBtn.addEventListener("click", (): Promise<void> =>
-      loadHomeTimeline(followedPubkeys, kinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg),
+      loadHomeTimeline(
+        followedPubkeys,
+        kinds,
+        relays,
+        limit,
+        untilTimestamp,
+        seenEventIds,
+        output,
+        connectingMsg,
+        activeWebSockets,
+        activeTimeouts,
+        routeIsActive,
+      ),
     );
   }
 }

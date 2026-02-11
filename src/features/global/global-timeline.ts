@@ -3,6 +3,7 @@ import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
 import { fetchProfile } from "../profile/profile.js";
 import { renderEvent } from "../../common/event-render.js";
 import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
+import { createRelayWebSocket } from "../../common/relay-socket.js";
 import type { NostrProfile, Npub, NostrEvent } from "../../../types/nostr";
 
 export async function loadGlobalTimeline(
@@ -14,7 +15,12 @@ export async function loadGlobalTimeline(
   connectingMsg: HTMLElement | null,
   activeWebSockets: WebSocket[] = [],
   activeTimeouts: number[] = [],
+  isRouteActive?: () => boolean,
 ): Promise<void> {
+  const routeIsActive: () => boolean = isRouteActive || (() => true);
+  if (!routeIsActive()) {
+    return;
+  }
   const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
   let clearedPlaceholder: boolean = false;
 
@@ -28,16 +34,20 @@ export async function loadGlobalTimeline(
   }
 
   for (const relayUrl of relays) {
-    const socket: WebSocket = new WebSocket(relayUrl);
+    const socket: WebSocket = createRelayWebSocket(relayUrl);
     activeWebSockets.push(socket);
 
     socket.onopen = (): void => {
+      if (!routeIsActive()) {
+        socket.close();
+        return;
+      }
       const subId: string = "global-" + Math.random().toString(36).slice(2);
       const req: [string, string, { kinds: number[]; until: number; limit: number }] = [
         "REQ",
         subId,
         {
-          kinds: [1],
+          kinds: [1, 6, 16],
           until: untilTimestamp,
           limit: limit,
         },
@@ -46,6 +56,9 @@ export async function loadGlobalTimeline(
     };
 
     socket.onmessage = async (msg: MessageEvent): Promise<void> => {
+      if (!routeIsActive()) {
+        return;
+      }
       const arr: any[] = JSON.parse(msg.data);
       if (arr[0] === "EVENT") {
         const event: NostrEvent = arr[2];
@@ -109,6 +122,9 @@ export async function loadGlobalTimeline(
     };
 
     socket.onerror = (err: Event): void => {
+      if (!routeIsActive()) {
+        return;
+      }
       console.error(`WebSocket error [${relayUrl}]`, err);
       if (connectingMsg) {
         connectingMsg.style.display = "none";
@@ -121,6 +137,9 @@ export async function loadGlobalTimeline(
   }
 
   const timeoutId = window.setTimeout((): void => {
+    if (!routeIsActive()) {
+      return;
+    }
     // Only show error if no events exist in the DOM and seenEventIds is still empty
     const hasEvents = output.querySelectorAll(".event-container").length > 0;
     if (!hasEvents && seenEventIds.size === 0) {
@@ -147,7 +166,17 @@ export async function loadGlobalTimeline(
     const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
     loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
     newLoadMoreBtn.addEventListener("click", (): Promise<void> =>
-      loadGlobalTimeline(relays, limit, untilTimestamp, seenEventIds, output, connectingMsg),
+      loadGlobalTimeline(
+        relays,
+        limit,
+        untilTimestamp,
+        seenEventIds,
+        output,
+        connectingMsg,
+        activeWebSockets,
+        activeTimeouts,
+        routeIsActive,
+      ),
     );
   }
 }

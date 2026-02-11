@@ -8,6 +8,7 @@ export function setActiveNav(
   globalButton: HTMLElement | null,
   relaysButton: HTMLElement | null,
   profileLink: HTMLElement | null,
+  settingsButton: HTMLElement | null,
   activeButton: HTMLElement | null,
 ): void {
   if (homeButton) {
@@ -26,6 +27,10 @@ export function setActiveNav(
     profileLink.classList.remove('bg-indigo-100', 'text-indigo-700');
     profileLink.classList.add('text-gray-700');
   }
+  if (settingsButton) {
+    settingsButton.classList.remove('bg-indigo-100', 'text-indigo-700');
+    settingsButton.classList.add('text-gray-700');
+  }
 
   if (activeButton) {
     activeButton.classList.remove('text-gray-700');
@@ -38,6 +43,7 @@ export function setupNavigation(options: NavigationOptions): void {
   const globalButton: HTMLElement | null = document.getElementById('nav-global');
   const notificationsButton: HTMLElement | null = document.getElementById('nav-notifications');
   const relaysButton: HTMLElement | null = document.getElementById('nav-relays');
+  const settingsButton: HTMLElement | null = document.getElementById('nav-settings');
   const logoutButton: HTMLElement | null = document.getElementById('nav-logout');
 
   if (homeButton) {
@@ -64,6 +70,13 @@ export function setupNavigation(options: NavigationOptions): void {
   if (relaysButton) {
     relaysButton.addEventListener('click', (): void => {
       window.history.pushState(null, '', '/relays');
+      options.handleRoute();
+    });
+  }
+
+  if (settingsButton) {
+    settingsButton.addEventListener('click', (): void => {
+      window.history.pushState(null, '', '/settings');
       options.handleRoute();
     });
   }

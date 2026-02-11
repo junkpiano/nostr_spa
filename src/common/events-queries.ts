@@ -1,3 +1,5 @@
+import { createRelayWebSocket } from "./relay-socket.js";
+import { recordRelayFailure } from "../features/relays/relays.js";
 import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
 export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): Promise<PubkeyHex[]> {
@@ -9,7 +11,7 @@ export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): P
 
   const promises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         let settled: boolean = false;
         const finish = (): void => {
@@ -21,8 +23,9 @@ export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): P
         };
 
         const timeout = setTimeout(() => {
+          recordRelayFailure(relayUrl);
           finish();
-        }, 8000);
+        }, 5000);
 
         socket.onopen = (): void => {
           const subId: string = "follows-" + Math.random().toString(36).slice(2);
@@ -85,85 +88,71 @@ export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): P
   return Array.from(followedPubkeys);
 }
 
+async function fetchEventFromRelay(
+  eventId: string,
+  relayUrl: string,
+  timeoutMs: number,
+): Promise<NostrEvent | null> {
+  return await new Promise<NostrEvent | null>((resolve) => {
+    let settled: boolean = false;
+    const socket: WebSocket = createRelayWebSocket(relayUrl);
+
+    const finish = (event: NostrEvent | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.close();
+      resolve(event);
+    };
+
+    const timeout = setTimeout((): void => {
+      recordRelayFailure(relayUrl);
+      finish(null);
+    }, timeoutMs);
+
+    socket.onopen = (): void => {
+      const subId: string = "event-" + Math.random().toString(36).slice(2);
+      const req: [string, string, { ids: string[]; limit: number }] = [
+        "REQ",
+        subId,
+        { ids: [eventId], limit: 1 },
+      ];
+      socket.send(JSON.stringify(req));
+    };
+
+    socket.onmessage = (msg: MessageEvent): void => {
+      const arr: any[] = JSON.parse(msg.data);
+      if (arr[0] === "EVENT" && arr[2]) {
+        finish(arr[2] as NostrEvent);
+        return;
+      }
+      if (arr[0] === "EOSE") {
+        finish(null);
+      }
+    };
+
+    socket.onerror = (): void => {
+      finish(null);
+    };
+  });
+}
+
 export async function fetchEventById(eventId: string, relays: string[]): Promise<NostrEvent | null> {
   if (relays.length === 0) {
     return null;
   }
 
-  return await new Promise<NostrEvent | null>((resolve) => {
-    let settled: boolean = false;
-    let pending: number = relays.length;
-    const sockets: WebSocket[] = [];
-
-    const closeAll = (): void => {
-      sockets.forEach((socket: WebSocket): void => {
-        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-          socket.close();
-        }
-      });
-    };
-
-    const finish = (event: NostrEvent | null): void => {
-      if (settled) return;
-      settled = true;
-      closeAll();
-      resolve(event);
-    };
-
-    relays.forEach((relayUrl: string): void => {
-      try {
-        const socket: WebSocket = new WebSocket(relayUrl);
-        sockets.push(socket);
-
-        const timeout = setTimeout((): void => {
-          pending -= 1;
-          if (pending <= 0) {
-            finish(null);
-          }
-        }, 4500);
-
-        socket.onopen = (): void => {
-          const subId: string = "event-" + Math.random().toString(36).slice(2);
-          const req: [string, string, { ids: string[]; limit: number }] = [
-            "REQ",
-            subId,
-            { ids: [eventId], limit: 1 },
-          ];
-          socket.send(JSON.stringify(req));
-        };
-
-        socket.onmessage = (msg: MessageEvent): void => {
-          const arr: any[] = JSON.parse(msg.data);
-          if (arr[0] === "EVENT" && arr[2]) {
-            clearTimeout(timeout);
-            finish(arr[2] as NostrEvent);
-            return;
-          }
-          if (arr[0] === "EOSE") {
-            clearTimeout(timeout);
-            pending -= 1;
-            if (pending <= 0) {
-              finish(null);
-            }
-          }
-        };
-
-        socket.onerror = (): void => {
-          clearTimeout(timeout);
-          pending -= 1;
-          if (pending <= 0) {
-            finish(null);
-          }
-        };
-      } catch (e) {
-        console.warn(`Failed to fetch event ${eventId} from ${relayUrl}:`, e);
-        pending -= 1;
-        if (pending <= 0) {
-          finish(null);
-        }
+  for (const relayUrl of relays) {
+    try {
+      const event: NostrEvent | null = await fetchEventFromRelay(eventId, relayUrl, 5000);
+      if (event) {
+        return event;
       }
-    });
-  });
+    } catch (e) {
+      console.warn(`Failed to fetch event ${eventId} from ${relayUrl}:`, e);
+    }
+  }
+  return null;
 }
 
 export async function isEventDeleted(
@@ -175,37 +164,24 @@ export async function isEventDeleted(
     return false;
   }
 
-  return await new Promise<boolean>((resolve) => {
-    let settled: boolean = false;
-    let pending: number = relays.length;
-    const sockets: WebSocket[] = [];
+  for (const relayUrl of relays) {
+    try {
+      const deleted: boolean = await new Promise<boolean>((resolve) => {
+        let settled: boolean = false;
+        const socket: WebSocket = createRelayWebSocket(relayUrl);
 
-    const closeAll = (): void => {
-      sockets.forEach((socket: WebSocket): void => {
-        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+        const finish = (value: boolean): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
           socket.close();
-        }
-      });
-    };
-
-    const finish = (deleted: boolean): void => {
-      if (settled) return;
-      settled = true;
-      closeAll();
-      resolve(deleted);
-    };
-
-    relays.forEach((relayUrl: string): void => {
-      try {
-        const socket: WebSocket = new WebSocket(relayUrl);
-        sockets.push(socket);
+          resolve(value);
+        };
 
         const timeout = setTimeout((): void => {
-          pending -= 1;
-          if (pending <= 0) {
-            finish(false);
-          }
-        }, 4500);
+          recordRelayFailure(relayUrl);
+          finish(false);
+        }, 5000);
 
         socket.onopen = (): void => {
           const subId: string = "deleted-" + Math.random().toString(36).slice(2);
@@ -230,35 +206,28 @@ export async function isEventDeleted(
               (tag: string[]): boolean => tag[0] === "e" && tag[1] === eventId,
             );
             if (referencesTarget) {
-              clearTimeout(timeout);
               finish(true);
               return;
             }
           } else if (arr[0] === "EOSE") {
-            clearTimeout(timeout);
-            pending -= 1;
-            if (pending <= 0) {
-              finish(false);
-            }
+            finish(false);
           }
         };
 
         socket.onerror = (): void => {
-          clearTimeout(timeout);
-          pending -= 1;
-          if (pending <= 0) {
-            finish(false);
-          }
-        };
-      } catch (e) {
-        console.warn(`Failed to check delete event on ${relayUrl}:`, e);
-        pending -= 1;
-        if (pending <= 0) {
           finish(false);
-        }
+        };
+      });
+
+      if (deleted) {
+        return true;
       }
-    });
-  });
+    } catch (e) {
+      console.warn(`Failed to check delete event on ${relayUrl}:`, e);
+    }
+  }
+
+  return false;
 }
 
 export async function fetchRepliesForEvent(eventId: string, relays: string[]): Promise<NostrEvent[]> {
@@ -270,7 +239,7 @@ export async function fetchRepliesForEvent(eventId: string, relays: string[]): P
 
   const promises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         let settled: boolean = false;
         const finish = (): void => {
@@ -282,8 +251,9 @@ export async function fetchRepliesForEvent(eventId: string, relays: string[]): P
         };
 
         const timeout = setTimeout(() => {
+          recordRelayFailure(relayUrl);
           finish();
-        }, 6000);
+        }, 5000);
 
         socket.onopen = (): void => {
           const subId: string = "replies-" + Math.random().toString(36).slice(2);

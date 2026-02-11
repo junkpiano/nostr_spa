@@ -4,24 +4,47 @@ import { fetchProfile } from "../features/profile/profile.js";
 import { getRelays } from "../features/relays/relays.js";
 import { getSessionPrivateKey } from "./session.js";
 import { fetchEventById, isEventDeleted } from "./events-queries.js";
+import { createRelayWebSocket } from "./relay-socket.js";
+import { getCachedEvent, setCachedEvent } from "./event-cache.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../../types/nostr";
 
+const REFERENCED_EVENT_CACHE_LIMIT: number = 1000;
 const referencedEventCache: Map<string, Promise<NostrEvent | null>> = new Map();
 const reactionCache: Map<string, Promise<Map<string, number>>> = new Map();
 const reactionEventsCache: Map<string, Promise<NostrEvent[]>> = new Map();
 
-function fetchEventByIdCached(eventId: string, relays: string[]): Promise<NostrEvent | null> {
+function setReferencedEventCache(eventId: string, request: Promise<NostrEvent | null>): void {
+  referencedEventCache.delete(eventId);
+  referencedEventCache.set(eventId, request);
+  if (referencedEventCache.size > REFERENCED_EVENT_CACHE_LIMIT) {
+    const oldestKey: string | undefined = referencedEventCache.keys().next().value;
+    if (oldestKey) {
+      referencedEventCache.delete(oldestKey);
+    }
+  }
+}
+
+async function fetchEventByIdCached(eventId: string, relays: string[]): Promise<NostrEvent | null> {
   const cached: Promise<NostrEvent | null> | undefined = referencedEventCache.get(eventId);
   if (cached) {
+    setReferencedEventCache(eventId, cached);
     return cached;
   }
-  const request: Promise<NostrEvent | null> = fetchEventById(eventId, relays).then((event: NostrEvent | null) => {
-    if (!event) {
-      referencedEventCache.delete(eventId);
+
+  const request: Promise<NostrEvent | null> = (async (): Promise<NostrEvent | null> => {
+    const cachedEvent: NostrEvent | null = await getCachedEvent(eventId);
+    if (cachedEvent) {
+      return cachedEvent;
     }
-    return event;
-  });
-  referencedEventCache.set(eventId, request);
+    const event: NostrEvent | null = await fetchEventById(eventId, relays);
+    if (event) {
+      await setCachedEvent(event);
+      return event;
+    }
+    referencedEventCache.delete(eventId);
+    return null;
+  })();
+  setReferencedEventCache(eventId, request);
   return request;
 }
 
@@ -37,7 +60,7 @@ async function fetchReactions(eventId: string, relays: string[]): Promise<Map<st
 
     const promises = relays.map(async (relayUrl: string): Promise<void> => {
       try {
-        const socket: WebSocket = new WebSocket(relayUrl);
+        const socket: WebSocket = createRelayWebSocket(relayUrl);
         await new Promise<void>((innerResolve) => {
           let settled: boolean = false;
           const finish = (): void => {
@@ -107,7 +130,7 @@ async function fetchReactionEvents(eventId: string, relays: string[]): Promise<N
 
     const promises = relays.map(async (relayUrl: string): Promise<void> => {
       try {
-        const socket: WebSocket = new WebSocket(relayUrl);
+        const socket: WebSocket = createRelayWebSocket(relayUrl);
         await new Promise<void>((innerResolve) => {
           let settled: boolean = false;
           const finish = (): void => {
@@ -187,14 +210,14 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchEventWithRetry(eventId: string, relays: string[], attempts: number = 3): Promise<NostrEvent | null> {
+async function fetchEventWithRetry(eventId: string, relays: string[], attempts: number = 4): Promise<NostrEvent | null> {
   for (let i = 0; i < attempts; i += 1) {
     const event: NostrEvent | null = await fetchEventByIdCached(eventId, relays);
     if (event) {
       return event;
     }
     if (i < attempts - 1) {
-      await delay(800);
+      await delay(800 + i * 600);
     }
   }
   return null;
@@ -384,7 +407,7 @@ async function publishReaction(
   const relays: string[] = getRelays();
   const promises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
           socket.close();
@@ -425,6 +448,8 @@ export function renderEvent(
   pubkey: PubkeyHex,
   output: HTMLElement,
 ): void {
+  const isRepost: boolean = event.kind === 6 || event.kind === 16;
+  const repostEventId: string | null = isRepost ? resolveRepostEventId(event) : null;
   const avatar: string = getAvatarURL(pubkey, profile);
   const name: string = getDisplayName(npub, profile);
   const createdAt: string = new Date(event.created_at * 1000).toLocaleString();
@@ -448,11 +473,12 @@ export function renderEvent(
         `
     : "";
 
+  const contentSource: string = isRepost ? "" : event.content;
   const urls: string[] = [];
   const imageUrls: string[] = [];
   const mentionedNpubs: string[] = Array.from(
     new Set(
-      [...event.content.matchAll(/nostr:(npub1[0-9a-z]+)/gi)]
+      [...contentSource.matchAll(/nostr:(npub1[0-9a-z]+)/gi)]
         .map((match: RegExpMatchArray): string | undefined => match[1])
         .filter((value: string | undefined): value is string => Boolean(value)),
     ),
@@ -470,20 +496,17 @@ export function renderEvent(
   });
   const referencedEventRefs: string[] = Array.from(
     new Set(
-      [...event.content.matchAll(/nostr:((?:nevent1|note1)[0-9a-z]+)/gi)]
+      [...contentSource.matchAll(/nostr:((?:nevent1|note1)[0-9a-z]+)/gi)]
         .map((match: RegExpMatchArray): string | undefined => match[1])
         .filter((value: string | undefined): value is string => Boolean(value)),
     ),
   );
-  const parentEventId: string | null = resolveParentEventId(event);
+  const parentEventId: string | null = isRepost ? null : resolveParentEventId(event);
   const parentAuthorPubkey: PubkeyHex | null = parentEventId ? resolveParentAuthorPubkey(event) : null;
-  const contentWithEmoji: string = replaceEmojiShortcodes(event.content);
+  const contentWithEmoji: string = replaceEmojiShortcodes(contentSource);
   const contentWithNostrLinks: string = contentWithEmoji.replace(
     /(nostr:(?:nevent1|note1)[0-9a-z]+)/gi,
-    (eventRef: string): string => {
-      const path: string = `/${eventRef.replace(/^nostr:/i, "")}`;
-      return `<a href="${path}" class="text-indigo-600 underline">${eventRef}</a>`;
-    },
+    (): string => "",
   );
 
   const contentWithMentions: string = contentWithNostrLinks.replace(
@@ -509,6 +532,14 @@ export function renderEvent(
     },
   );
 
+  const hasContent: boolean = contentWithLinks.trim().length > 0;
+  const repostBadgeHtml: string = isRepost
+    ? `<span class="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5">🔁 Repost</span>`
+    : "";
+  const contentHtml: string = hasContent
+    ? `<div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>`
+    : "";
+
   const div: HTMLDivElement = document.createElement("div");
   div.className = "bg-gray-50 border border-gray-200 rounded p-4 shadow event-container";
   div.dataset.pubkey = pubkey;
@@ -522,9 +553,10 @@ export function renderEvent(
 	          onerror="this.src='https://placekitten.com/100/100';" />
 	      </a>
 		      <div class="flex-1 overflow-hidden">
-		        <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
+        <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
+        ${repostBadgeHtml}
             <div class="parent-event-container mb-2"></div>
-			        <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
+			        ${contentHtml}
             <div class="referenced-events-container space-y-2"></div>
 		        <div class="ogp-container"></div>
             <div class="reactions-container mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
@@ -590,12 +622,40 @@ export function renderEvent(
     }
   }
 
-  if (referencedEventRefs.length > 0) {
-    const referencedContainer: HTMLElement | null = div.querySelector(".referenced-events-container");
-    if (referencedContainer) {
-      renderReferencedEventCards(referencedEventRefs, referencedContainer);
+  const allReferencedEventRefs: string[] = [];
+  if (repostEventId) {
+    try {
+      const repostRef: string = nip19.neventEncode({ id: repostEventId });
+      allReferencedEventRefs.push(repostRef);
+    } catch (e) {
+      console.warn("Failed to encode repost event ref:", e);
     }
   }
+
+  if (allReferencedEventRefs.length > 0) {
+    const referencedContainer: HTMLElement | null = div.querySelector(".referenced-events-container");
+    if (referencedContainer) {
+      renderReferencedEventCards(allReferencedEventRefs, referencedContainer);
+    }
+  }
+}
+
+function resolveRepostEventId(event: NostrEvent): string | null {
+  if (event.kind !== 6 && event.kind !== 16) {
+    return null;
+  }
+  if (event.content) {
+    try {
+      const parsed: { id?: string } = JSON.parse(event.content);
+      if (parsed && typeof parsed.id === "string") {
+        return parsed.id;
+      }
+    } catch {
+      // ignore non-JSON content
+    }
+  }
+  const eTag: string[] | undefined = event.tags.find((tag: string[]): boolean => tag[0] === "e" && Boolean(tag[1]));
+  return eTag?.[1] || null;
 }
 
 function resolveParentEventId(event: NostrEvent): string | null {
@@ -727,7 +787,7 @@ async function deleteEventOnRelays(targetEvent: NostrEvent): Promise<void> {
   const relays: string[] = getRelays();
   const publishPromises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         let settled: boolean = false;
         const finish = (): void => {

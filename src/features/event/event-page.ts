@@ -15,9 +15,14 @@ interface LoadEventPageOptions {
   closeAllWebSockets: () => void;
   stopBackgroundFetch: () => void;
   clearNotification: () => void;
+  isRouteActive?: () => boolean;
 }
 
 export async function loadEventPage(options: LoadEventPageOptions): Promise<void> {
+  const isRouteActive: () => boolean = options.isRouteActive || (() => true);
+  if (!isRouteActive()) {
+    return;
+  }
   options.closeAllWebSockets();
   options.stopBackgroundFetch();
   options.clearNotification();
@@ -26,7 +31,8 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
   const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  setActiveNav(homeButton, globalButton, relaysButton, profileLink, null);
+  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+  setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, null);
 
   const postsHeader: HTMLElement | null = document.getElementById("posts-header");
   if (postsHeader) {
@@ -67,6 +73,9 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
 
     const relaysToUse: string[] = relayHints.length > 0 ? relayHints : options.relays;
     const event = await fetchEventById(eventId, relaysToUse);
+    if (!isRouteActive()) {
+      return;
+    }
 
     if (!options.output) return;
     options.output.innerHTML = "";
@@ -86,6 +95,9 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
       isEventDeleted(event.id, event.pubkey as PubkeyHex, relaysToUse),
       fetchProfile(event.pubkey, relaysToUse),
     ]);
+    if (!isRouteActive()) {
+      return;
+    }
 
     if (deleted) {
       options.output.innerHTML = "<p class='text-gray-600'>This event was deleted by the author.</p>";
@@ -109,6 +121,9 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
       await loadReactionsForEvent(event.id, event.pubkey as PubkeyHex, reactionsContainer);
     }
 
+    if (!isRouteActive()) {
+      return;
+    }
     await renderReplyTree(event, relaysToUse, options.output);
   } catch (error: unknown) {
     console.error("Failed to load nevent:", error);

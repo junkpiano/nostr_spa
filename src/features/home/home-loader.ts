@@ -17,10 +17,15 @@ interface LoadUserHomeTimelineOptions {
   setNewestEventTimestamp: (value: number) => void;
   setCachedHomeTimeline: (followedWithSelf: PubkeyHex[], seen: Set<string>) => void;
   startBackgroundFetch: (followedWithSelf: PubkeyHex[]) => void;
+  isRouteActive?: () => boolean;
 }
 
 export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions): Promise<void> {
   try {
+    const isRouteActive: () => boolean = options.isRouteActive || (() => true);
+    if (!isRouteActive()) {
+      return;
+    }
     if (options.output) {
       options.output.innerHTML = `
         <div class="text-center py-12">
@@ -43,6 +48,9 @@ export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions)
     }
 
     const followedPubkeys: PubkeyHex[] = await fetchFollowList(options.pubkeyHex, options.relays);
+    if (!isRouteActive()) {
+      return;
+    }
     const followedWithSelf: PubkeyHex[] = Array.from(new Set([...followedPubkeys, options.pubkeyHex]));
 
     if (options.output) {
@@ -70,8 +78,12 @@ export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions)
         options.connectingMsg,
         options.activeWebSockets,
         options.activeTimeouts,
+        isRouteActive,
       );
 
+      if (!isRouteActive()) {
+        return;
+      }
       options.setCachedHomeTimeline(followedWithSelf, options.seenEventIds);
       options.startBackgroundFetch(followedWithSelf);
     }

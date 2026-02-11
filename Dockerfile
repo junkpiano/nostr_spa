@@ -1,20 +1,20 @@
 # Stage 1: Build the Vite app
-FROM node:20-slim AS builder
+FROM oven/bun:1 AS builder
 
 # Create app directory
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json bun.lockb bun.lock ./
 
 # Install dependencies
-RUN npm ci
+RUN bun install --frozen-lockfile
 
 # Copy source code
 COPY . .
 
 # Build the Vite app
-RUN npm run build
+RUN bun run build
 
 # Stage 2: Serve with nginx
 FROM nginx:alpine

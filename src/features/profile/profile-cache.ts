@@ -70,3 +70,26 @@ export function setCachedProfile(pubkey: PubkeyHex, profile: NostrProfile): void
 
   writeStore(store);
 }
+
+export function getProfileCacheStats(): { count: number; bytes: number } {
+  try {
+    const raw: string | null = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) {
+      return { count: 0, bytes: 0 };
+    }
+    const encoder: TextEncoder | null = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+    const bytes: number = encoder ? encoder.encode(raw).length : raw.length;
+    const store: ProfileCacheStore = readStore();
+    return { count: store.order.length, bytes };
+  } catch {
+    return { count: 0, bytes: 0 };
+  }
+}
+
+export function clearProfileCache(): void {
+  try {
+    localStorage.removeItem(PROFILE_CACHE_KEY);
+  } catch {
+    // ignore
+  }
+}

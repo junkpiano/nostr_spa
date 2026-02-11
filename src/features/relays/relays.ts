@@ -1,4 +1,5 @@
 const RELAYS_STORAGE_KEY: string = "nostr_relays";
+const RELAY_HEALTH_KEY: string = "nostr_relay_health_v1";
 const defaultRelays: string[] = [
   "wss://relay.snort.social",
   "wss://relay.damus.io",
@@ -7,8 +8,18 @@ const defaultRelays: string[] = [
 ];
 
 let relays: string[] = loadRelaysFromStorage();
+let relayHealth: Map<string, { success: number; failure: number }> = loadRelayHealth();
+relayHealth.forEach((_value: { success: number; failure: number }, relayUrl: string): void => {
+  if (!relays.includes(relayUrl)) {
+    relayHealth.delete(relayUrl);
+  }
+});
 
 export function getRelays(): string[] {
+  return relays;
+}
+
+export function getAllRelays(): string[] {
   return relays;
 }
 
@@ -16,6 +27,12 @@ export function setRelays(relayList: string[]): void {
   const unique: string[] = Array.from(new Set(relayList));
   localStorage.setItem(RELAYS_STORAGE_KEY, JSON.stringify(unique));
   relays = unique;
+  relayHealth.forEach((_value: { success: number; failure: number }, relayUrl: string): void => {
+    if (!relays.includes(relayUrl)) {
+      relayHealth.delete(relayUrl);
+    }
+  });
+  persistRelayHealth();
 }
 
 export function normalizeRelayUrl(rawUrl: string): string | null {
@@ -38,6 +55,28 @@ export function normalizeRelayUrl(rawUrl: string): string | null {
   }
 }
 
+export function recordRelayFailure(relayUrl: string): void {
+  const normalized: string | null = normalizeRelayUrl(relayUrl);
+  const target: string = normalized || relayUrl;
+  if (!relays.includes(target)) {
+    return;
+  }
+  const current: { success: number; failure: number } = relayHealth.get(target) || { success: 0, failure: 0 };
+  relayHealth.set(target, { success: current.success, failure: current.failure + 1 });
+  persistRelayHealth();
+  notifyRelaysUpdated();
+}
+
+export function recordRelaySuccess(relayUrl: string): void {
+  const normalized: string | null = normalizeRelayUrl(relayUrl);
+  const target: string = normalized || relayUrl;
+  if (!relays.includes(target)) return;
+  const current: { success: number; failure: number } = relayHealth.get(target) || { success: 0, failure: 0 };
+  relayHealth.set(target, { success: current.success + 1, failure: current.failure });
+  persistRelayHealth();
+  notifyRelaysUpdated();
+}
+
 function loadRelaysFromStorage(): string[] {
   try {
     const raw: string | null = localStorage.getItem(RELAYS_STORAGE_KEY);
@@ -51,5 +90,40 @@ function loadRelaysFromStorage(): string[] {
     return Array.from(new Set(normalized));
   } catch {
     return [...defaultRelays];
+  }
+}
+
+function loadRelayHealth(): Map<string, { success: number; failure: number }> {
+  try {
+    const raw: string | null = localStorage.getItem(RELAY_HEALTH_KEY);
+    if (!raw) return new Map();
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return new Map();
+    const entries: Array<[string, { success: number; failure: number }]> = Object.entries(
+      parsed as Record<string, { success: number; failure: number }>,
+    )
+      .map(([key, value]: [string, { success: number; failure: number }]): [string, { success: number; failure: number }] => {
+        const success: number = Number.isFinite(value?.success) ? value.success : 0;
+        const failure: number = Number.isFinite(value?.failure) ? value.failure : 0;
+        return [key, { success, failure }];
+      })
+      .filter(([key]: [string, { success: number; failure: number }]): boolean => typeof key === "string");
+    return new Map(entries);
+  } catch {
+    return new Map();
+  }
+}
+
+function persistRelayHealth(): void {
+  const healthObj: Record<string, { success: number; failure: number }> = {};
+  relayHealth.forEach((value: { success: number; failure: number }, key: string): void => {
+    healthObj[key] = value;
+  });
+  localStorage.setItem(RELAY_HEALTH_KEY, JSON.stringify(healthObj));
+}
+
+function notifyRelaysUpdated(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("relays-updated"));
   }
 }

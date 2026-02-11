@@ -1,3 +1,4 @@
+import { createRelayWebSocket } from "../../common/relay-socket.js";
 import type { SetActiveNavFn } from "../../common/types.js";
 
 interface RelaysPageOptions {
@@ -22,7 +23,8 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
   const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  options.setActiveNav(homeButton, globalButton, relaysButton, profileLink, relaysButton);
+  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+  options.setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, relaysButton);
 
   const postsHeader: HTMLElement | null = document.getElementById("posts-header");
   if (postsHeader) {
@@ -113,6 +115,42 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
       const actions: HTMLDivElement = document.createElement("div");
       actions.className = "flex gap-2 items-center";
 
+      const upBtn: HTMLButtonElement = document.createElement("button");
+      upBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors";
+      upBtn.textContent = "↑";
+      upBtn.disabled = index === 0;
+      if (upBtn.disabled) {
+        upBtn.classList.add("opacity-60", "cursor-not-allowed");
+      }
+      upBtn.addEventListener("click", (): void => {
+        clearError();
+        if (index <= 0) return;
+        const reordered: string[] = [...currentRelays];
+        [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+        currentRelays = reordered;
+        options.setRelays(currentRelays);
+        options.onRelaysChanged();
+        renderRelayList();
+      });
+
+      const downBtn: HTMLButtonElement = document.createElement("button");
+      downBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors";
+      downBtn.textContent = "↓";
+      downBtn.disabled = index === currentRelays.length - 1;
+      if (downBtn.disabled) {
+        downBtn.classList.add("opacity-60", "cursor-not-allowed");
+      }
+      downBtn.addEventListener("click", (): void => {
+        clearError();
+        if (index >= currentRelays.length - 1) return;
+        const reordered: string[] = [...currentRelays];
+        [reordered[index + 1], reordered[index]] = [reordered[index], reordered[index + 1]];
+        currentRelays = reordered;
+        options.setRelays(currentRelays);
+        options.onRelaysChanged();
+        renderRelayList();
+      });
+
       const editBtn: HTMLButtonElement = document.createElement("button");
       editBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors";
       editBtn.textContent = "Edit";
@@ -148,6 +186,8 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
       });
 
       actions.appendChild(status);
+      actions.appendChild(upBtn);
+      actions.appendChild(downBtn);
       actions.appendChild(editBtn);
       actions.appendChild(deleteBtn);
       row.appendChild(urlText);
@@ -159,7 +199,7 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
   }
 
   function checkRelayStatus(relayUrl: string, statusEl: HTMLElement): void {
-    const socket: WebSocket = new WebSocket(relayUrl);
+    const socket: WebSocket = createRelayWebSocket(relayUrl, false);
     relayStatusSockets.push(socket);
 
     const timeoutId = window.setTimeout((): void => {

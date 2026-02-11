@@ -5,8 +5,9 @@ import { loadHomeTimeline } from "../features/home/home-timeline.js";
 import { loadEvents } from "../features/profile/profile-events.js";
 import { setupComposeOverlay } from "../common/compose.js";
 import { setupImageOverlay } from "../common/overlays.js";
-import { getRelays, setRelays, normalizeRelayUrl } from "../features/relays/relays.js";
+import { getAllRelays, getRelays, setRelays, recordRelayFailure, normalizeRelayUrl } from "../features/relays/relays.js";
 import { loadRelaysPage } from "../features/relays/relays-page.js";
+import { loadSettingsPage } from "../features/settings/settings-page.js";
 import { setupFollowToggle, publishEventToRelays } from "../features/profile/follow.js";
 import { setupSearchBar } from "../common/search.js";
 import { setupNavigation, setActiveNav } from "../common/navigation.js";
@@ -15,6 +16,7 @@ import { clearNotifications, loadNotificationsPage } from "../features/notificat
 import { showInputForm } from "../features/home/welcome.js";
 import { loadEventPage } from "../features/event/event-page.js";
 import { loadUserHomeTimeline } from "../features/home/home-loader.js";
+import { createRelayWebSocket } from "../common/relay-socket.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
@@ -26,12 +28,13 @@ const limit: number = 100;
 let seenEventIds: Set<string> = new Set();
 let untilTimestamp: number = Math.floor(Date.now() / 1000);
 let profile: NostrProfile | null = null;
-const homeKinds: number[] = [1, 2, 9, 11, 22, 28, 40, 70, 77];
+const homeKinds: number[] = [1, 2, 6, 9, 11, 16, 22, 28, 40, 70, 77];
 
 // Cache for home timeline
 let cachedHomeTimeline: { events: any[]; followedPubkeys: string[]; timestamp: number } | null = null;
 let backgroundFetchInterval: number | null = null;
 let newestEventTimestamp: number = Math.floor(Date.now() / 1000);
+let activeRouteToken: number = 0;
 
 // Track active WebSocket connections
 let activeWebSockets: WebSocket[] = [];
@@ -68,10 +71,17 @@ function closeAllWebSockets(): void {
   activeTimeouts = [];
 }
 
+function createRouteGuard(): () => boolean {
+  activeRouteToken += 1;
+  const token: number = activeRouteToken;
+  return (): boolean => token === activeRouteToken;
+}
+
 function syncRelays(): void {
   relays = getRelays();
 }
 document.addEventListener("DOMContentLoaded", (): void => {
+  window.addEventListener("relays-updated", syncRelays);
   if (connectingMsg) {
     connectingMsg.style.display = "none"; // Hide connecting message by default
   }
@@ -95,10 +105,11 @@ document.addEventListener("DOMContentLoaded", (): void => {
     getRelays: (): string[] => relays,
     publishEvent: publishEventToRelays,
     refreshTimeline: async (): Promise<void> => {
+      const isRouteActive: () => boolean = createRouteGuard();
       if (window.location.pathname === "/home") {
-        await loadHomePage();
+        await loadHomePage(isRouteActive);
       } else if (window.location.pathname === "/global") {
-        await loadGlobalPage();
+        await loadGlobalPage(isRouteActive);
       }
     },
   });
@@ -147,6 +158,7 @@ window.addEventListener("popstate", (): void => {
 
 // Router function
 function handleRoute(): void {
+  const isRouteActive: () => boolean = createRouteGuard();
   const path: string = window.location.pathname;
   updateLogoutButton(composeButton);
   const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
@@ -158,23 +170,24 @@ function handleRoute(): void {
   if (path === "/" || path === "") {
     // Redirect to /home
     window.history.replaceState(null, "", "/home");
-    loadHomePage();
+    loadHomePage(isRouteActive);
   } else if (path === "/home") {
-    loadHomePage();
+    loadHomePage(isRouteActive);
   } else if (path === "/global") {
-    loadGlobalPage();
+    loadGlobalPage(isRouteActive);
   } else if (path === "/notifications") {
     const homeButton: HTMLElement | null = document.getElementById("nav-home");
     const globalButton: HTMLElement | null = document.getElementById("nav-global");
     const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
     const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
     const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-    setActiveNav(homeButton, globalButton, relaysButton, profileLink, null);
+    const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+    setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, null);
     if (notificationsButton) {
       notificationsButton.classList.remove("text-gray-700");
       notificationsButton.classList.add("bg-indigo-100", "text-indigo-700");
     }
-    loadNotificationsPage({ relays, limit: 50 });
+    loadNotificationsPage({ relays, limit: 50, isRouteActive });
   } else if (path === "/relays") {
     loadRelaysPage({
       closeAllWebSockets,
@@ -191,13 +204,32 @@ function handleRoute(): void {
         }
       },
       setActiveNav,
-      getRelays: (): string[] => relays,
+      getRelays: (): string[] => getAllRelays(),
       setRelays: (list: string[]): void => {
         setRelays(list);
         syncRelays();
       },
       normalizeRelayUrl,
       onRelaysChanged: syncRelays,
+      profileSection,
+      output,
+    });
+  } else if (path === "/settings") {
+    loadSettingsPage({
+      closeAllWebSockets,
+      stopBackgroundFetch: (): void => {
+        if (backgroundFetchInterval) {
+          clearInterval(backgroundFetchInterval);
+          backgroundFetchInterval = null;
+        }
+      },
+      clearNotification: (): void => {
+        const notification = document.getElementById("new-posts-notification");
+        if (notification) {
+          notification.remove();
+        }
+      },
+      setActiveNav,
       profileSection,
       output,
     });
@@ -223,19 +255,21 @@ function handleRoute(): void {
             notification.remove();
           }
         },
+        isRouteActive,
       });
     } else if (npub.startsWith("npub")) {
       const homeButton: HTMLElement | null = document.getElementById("nav-home");
       const globalButton: HTMLElement | null = document.getElementById("nav-global");
       const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
       const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
-      const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-      setActiveNav(homeButton, globalButton, relaysButton, profileLink, profileLink);
+    const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+    const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+    setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, profileLink);
       if (notificationsButton) {
         notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
         notificationsButton.classList.add("text-gray-700");
       }
-      startApp(npub);
+      startApp(npub, isRouteActive);
     } else {
       if (output) {
         output.innerHTML = "<p class='text-red-500'>Invalid URL format.</p>";
@@ -245,7 +279,10 @@ function handleRoute(): void {
 }
 
 // Load home page
-async function loadHomePage(): Promise<void> {
+async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
+  if (!isRouteActive()) {
+    return;
+  }
   // Close any active WebSocket connections from previous timeline
   closeAllWebSockets();
 
@@ -257,7 +294,8 @@ async function loadHomePage(): Promise<void> {
   const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
   const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  setActiveNav(homeButton, globalButton, relaysButton, profileLink, homeButton);
+  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+  setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, homeButton);
   if (notificationsButton) {
     notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
     notificationsButton.classList.add("text-gray-700");
@@ -291,7 +329,22 @@ async function loadHomePage(): Promise<void> {
       newestEventTimestamp = untilTimestamp;
 
       if (output) {
-        await loadHomeTimeline(cachedHomeTimeline.followedPubkeys, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
+        await loadHomeTimeline(
+          cachedHomeTimeline.followedPubkeys,
+          homeKinds,
+          relays,
+          limit,
+          untilTimestamp,
+          seenEventIds,
+          output,
+          connectingMsg,
+          activeWebSockets,
+          activeTimeouts,
+          isRouteActive,
+        );
+      }
+      if (!isRouteActive()) {
+        return;
       }
 
       // Restart background fetching
@@ -330,7 +383,11 @@ async function loadHomePage(): Promise<void> {
           };
         },
         startBackgroundFetch,
+        isRouteActive,
       });
+      if (!isRouteActive()) {
+        return;
+      }
     }
   } else {
     // User not logged in, show welcome screen
@@ -347,7 +404,10 @@ async function loadHomePage(): Promise<void> {
 }
 
 // Load global page
-async function loadGlobalPage(): Promise<void> {
+async function loadGlobalPage(isRouteActive: () => boolean): Promise<void> {
+  if (!isRouteActive()) {
+    return;
+  }
   // Close any active WebSocket connections from previous timeline
   closeAllWebSockets();
 
@@ -357,7 +417,8 @@ async function loadGlobalPage(): Promise<void> {
   const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
   const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  setActiveNav(homeButton, globalButton, relaysButton, profileLink, globalButton);
+  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+  setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, globalButton);
   if (notificationsButton) {
     notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
     notificationsButton.classList.add("text-gray-700");
@@ -393,11 +454,24 @@ async function loadGlobalPage(): Promise<void> {
   seenEventIds.clear();
   untilTimestamp = Math.floor(Date.now() / 1000);
   if (output) {
-    await loadGlobalTimeline(relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
+    await loadGlobalTimeline(
+      relays,
+      limit,
+      untilTimestamp,
+      seenEventIds,
+      output,
+      connectingMsg,
+      activeWebSockets,
+      activeTimeouts,
+      isRouteActive,
+    );
   }
 }
 
-async function startApp(npub: Npub): Promise<void> {
+async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void> {
+  if (!isRouteActive()) {
+    return;
+  }
   renderLoadingState("Loading profile and posts...");
 
   let pubkeyHex: PubkeyHex;
@@ -415,6 +489,9 @@ async function startApp(npub: Npub): Promise<void> {
   }
 
   profile = await fetchProfile(pubkeyHex, relays);
+  if (!isRouteActive()) {
+    return;
+  }
   if (profileSection) {
     renderProfile(pubkeyHex, npub, profile, profileSection);
   }
@@ -425,8 +502,14 @@ async function startApp(npub: Npub): Promise<void> {
       cachedHomeTimeline = null;
     },
   });
+  if (!isRouteActive()) {
+    return;
+  }
   if (output) {
     await loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg);
+  }
+  if (!isRouteActive()) {
+    return;
   }
 
   const postsHeader: HTMLElement | null = document.getElementById("posts-header");
@@ -475,10 +558,11 @@ async function fetchNewPosts(followedPubkeys: PubkeyHex[]): Promise<void> {
 
   for (const relayUrl of relays) {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
 
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
+          recordRelayFailure(relayUrl);
           socket.close();
           resolve();
         }, 5000);

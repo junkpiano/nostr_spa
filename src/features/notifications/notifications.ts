@@ -2,12 +2,15 @@ import { nip19 } from 'nostr-tools';
 import { fetchProfile } from '../profile/profile.js';
 import { getDisplayName, replaceEmojiShortcodes } from '../../utils/utils.js';
 import type { NostrProfile, Npub } from '../../../types/nostr';
+import { createRelayWebSocket } from "../../common/relay-socket.js";
+import { recordRelayFailure } from "../relays/relays.js";
 import type { NostrEvent, PubkeyHex } from '../../../types/nostr';
 
 interface LoadNotificationsOptions {
   relays: string[];
   limit: number;
   force?: boolean;
+  isRouteActive?: () => boolean;
 }
 
 let lastFetchedAt: number = 0;
@@ -122,7 +125,7 @@ async function fetchNotifications(
 
   const promises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         let settled: boolean = false;
         const finish = (): void => {
@@ -134,8 +137,9 @@ async function fetchNotifications(
         };
 
         const timeout = setTimeout(() => {
+          recordRelayFailure(relayUrl);
           finish();
-        }, 6000);
+        }, 5000);
 
         socket.onopen = (): void => {
           const subId: string = 'notif-' + Math.random().toString(36).slice(2);
@@ -199,6 +203,10 @@ export function clearNotifications(): void {
 }
 
 export async function loadNotificationsPage(options: LoadNotificationsOptions): Promise<void> {
+  const isRouteActive: () => boolean = options.isRouteActive || (() => true);
+  if (!isRouteActive()) {
+    return;
+  }
   const output: HTMLElement | null = document.getElementById('nostr-output');
   const profileSection: HTMLElement | null = document.getElementById('profile-section');
   const postsHeader: HTMLElement | null = document.getElementById('posts-header');
@@ -225,7 +233,13 @@ export async function loadNotificationsPage(options: LoadNotificationsOptions): 
 
   output.innerHTML = '<div class=\"text-sm text-gray-500\">Loading notifications...</div>';
   const events: NostrEvent[] = await loadNotifications({ ...options, force: true });
+  if (!isRouteActive()) {
+    return;
+  }
   const displayNames: Map<PubkeyHex, string> = await loadDisplayNames(options.relays, events);
+  if (!isRouteActive()) {
+    return;
+  }
 
   output.innerHTML = '';
   const list: HTMLDivElement = document.createElement('div');

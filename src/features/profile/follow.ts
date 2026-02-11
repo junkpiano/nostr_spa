@@ -1,4 +1,6 @@
 import { finalizeEvent } from 'nostr-tools';
+import { createRelayWebSocket } from "../../common/relay-socket.js";
+import { recordRelayFailure } from "../relays/relays.js";
 import { fetchFollowList } from '../../common/events-queries.js';
 import { getSessionPrivateKey } from '../../common/session.js';
 import type { NostrEvent, PubkeyHex } from '../../../types/nostr';
@@ -121,9 +123,10 @@ export async function publishEventToRelays(
 ): Promise<void> {
   const promises = relayList.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = new WebSocket(relayUrl);
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
+          recordRelayFailure(relayUrl);
           socket.close();
           resolve();
         }, 5000);

@@ -1,5 +1,6 @@
 import { nip19 } from 'nostr-tools';
 import { renderEvent } from "../../common/event-render.js";
+import { createRelayWebSocket } from "../../common/relay-socket.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
 
 export async function loadEvents(
@@ -26,7 +27,7 @@ export async function loadEvents(
   }
 
   for (const relayUrl of relays) {
-    const socket: WebSocket = new WebSocket(relayUrl);
+    const socket: WebSocket = createRelayWebSocket(relayUrl);
 
     socket.onopen = (): void => {
       const subId: string = "sub-" + Math.random().toString(36).slice(2);
@@ -34,7 +35,7 @@ export async function loadEvents(
         "REQ",
         subId,
         {
-          kinds: [1],
+          kinds: [1, 6, 16],
           authors: [pubkeyHex],
           until: untilTimestamp,
           limit: limit,
