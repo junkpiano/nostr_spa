@@ -1,21 +1,421 @@
-import { nip19, finalizeEvent } from "https://esm.sh/nostr-tools@2.17.0";
-import { getAvatarURL, getDisplayName, fetchOGP, isTwitterURL, fetchTwitterEmbed, loadTwitterWidgets } from "./utils.js";
-import { fetchProfile } from "./profile.js";
-import { getRelays } from "./relays.js";
+import { nip19, finalizeEvent } from 'nostr-tools';
+import { getAvatarURL, getDisplayName, fetchOGP, isTwitterURL, fetchTwitterEmbed, loadTwitterWidgets, replaceEmojiShortcodes } from "../utils/utils.js";
+import { fetchProfile } from "../features/profile/profile.js";
+import { getRelays } from "../features/relays/relays.js";
 import { getSessionPrivateKey } from "./session.js";
-import { fetchEventById } from "./events-queries.js";
-import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../types/nostr";
+import { fetchEventById, isEventDeleted } from "./events-queries.js";
+import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../../types/nostr";
 
 const referencedEventCache: Map<string, Promise<NostrEvent | null>> = new Map();
+const reactionCache: Map<string, Promise<Map<string, number>>> = new Map();
+const reactionEventsCache: Map<string, Promise<NostrEvent[]>> = new Map();
 
 function fetchEventByIdCached(eventId: string, relays: string[]): Promise<NostrEvent | null> {
   const cached: Promise<NostrEvent | null> | undefined = referencedEventCache.get(eventId);
   if (cached) {
     return cached;
   }
-  const request: Promise<NostrEvent | null> = fetchEventById(eventId, relays);
+  const request: Promise<NostrEvent | null> = fetchEventById(eventId, relays).then((event: NostrEvent | null) => {
+    if (!event) {
+      referencedEventCache.delete(eventId);
+    }
+    return event;
+  });
   referencedEventCache.set(eventId, request);
   return request;
+}
+
+async function fetchReactions(eventId: string, relays: string[]): Promise<Map<string, number>> {
+  const cached: Promise<Map<string, number>> | undefined = reactionCache.get(eventId);
+  if (cached) {
+    return cached;
+  }
+
+  const request: Promise<Map<string, number>> = new Promise<Map<string, number>>((resolve) => {
+    const counts: Map<string, number> = new Map();
+    const seenReactionIds: Set<string> = new Set();
+
+    const promises = relays.map(async (relayUrl: string): Promise<void> => {
+      try {
+        const socket: WebSocket = new WebSocket(relayUrl);
+        await new Promise<void>((innerResolve) => {
+          let settled: boolean = false;
+          const finish = (): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            socket.close();
+            innerResolve();
+          };
+
+          const timeout = setTimeout(() => {
+            finish();
+          }, 5000);
+
+          socket.onopen = (): void => {
+            const subId: string = "reactions-" + Math.random().toString(36).slice(2);
+            const req: [string, string, { kinds: number[]; "#e": string[]; limit: number }] = [
+              "REQ",
+              subId,
+              { kinds: [7], "#e": [eventId], limit: 50 },
+            ];
+            socket.send(JSON.stringify(req));
+          };
+
+          socket.onmessage = (msg: MessageEvent): void => {
+            const arr: any[] = JSON.parse(msg.data);
+            if (arr[0] === "EVENT" && arr[2]) {
+              const event: NostrEvent = arr[2];
+              if (event.kind !== 7 || seenReactionIds.has(event.id)) {
+                return;
+              }
+              seenReactionIds.add(event.id);
+              const reaction: string = normalizeReaction(event.content);
+              const current: number = counts.get(reaction) || 0;
+              counts.set(reaction, current + 1);
+            } else if (arr[0] === "EOSE") {
+              finish();
+            }
+          };
+
+          socket.onerror = (): void => {
+            finish();
+          };
+        });
+      } catch (e) {
+        console.warn(`Failed to fetch reactions from ${relayUrl}:`, e);
+      }
+    });
+
+    Promise.allSettled(promises).then(() => {
+      resolve(counts);
+    });
+  });
+
+  reactionCache.set(eventId, request);
+  return request;
+}
+
+async function fetchReactionEvents(eventId: string, relays: string[]): Promise<NostrEvent[]> {
+  const cached: Promise<NostrEvent[]> | undefined = reactionEventsCache.get(eventId);
+  if (cached) {
+    return cached;
+  }
+
+  const request: Promise<NostrEvent[]> = new Promise<NostrEvent[]>((resolve) => {
+    const events: Map<string, NostrEvent> = new Map();
+
+    const promises = relays.map(async (relayUrl: string): Promise<void> => {
+      try {
+        const socket: WebSocket = new WebSocket(relayUrl);
+        await new Promise<void>((innerResolve) => {
+          let settled: boolean = false;
+          const finish = (): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            socket.close();
+            innerResolve();
+          };
+
+          const timeout = setTimeout(() => {
+            finish();
+          }, 5000);
+
+          socket.onopen = (): void => {
+            const subId: string = "reactions-events-" + Math.random().toString(36).slice(2);
+            const req: [string, string, { kinds: number[]; "#e": string[]; limit: number }] = [
+              "REQ",
+              subId,
+              { kinds: [7], "#e": [eventId], limit: 100 },
+            ];
+            socket.send(JSON.stringify(req));
+          };
+
+          socket.onmessage = (msg: MessageEvent): void => {
+            const arr: any[] = JSON.parse(msg.data);
+            if (arr[0] === "EVENT" && arr[2]) {
+              const event: NostrEvent = arr[2];
+              if (event.kind !== 7) {
+                return;
+              }
+              events.set(event.id, event);
+            } else if (arr[0] === "EOSE") {
+              finish();
+            }
+          };
+
+          socket.onerror = (): void => {
+            finish();
+          };
+        });
+      } catch (e) {
+        console.warn(`Failed to fetch reaction events from ${relayUrl}:`, e);
+      }
+    });
+
+    Promise.allSettled(promises).then(() => {
+      const list: NostrEvent[] = Array.from(events.values());
+      list.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
+      resolve(list);
+    });
+  });
+
+  reactionEventsCache.set(eventId, request);
+  return request;
+}
+
+function normalizeReaction(content: string | undefined): string {
+  const trimmed: string = replaceEmojiShortcodes(content || "").trim();
+  return trimmed ? trimmed : "❤";
+}
+
+function resolveParentAuthorPubkey(event: NostrEvent): PubkeyHex | null {
+  const pTags: string[][] = event.tags.filter((tag: string[]): boolean => tag[0] === "p");
+  const replyTag: string[] | undefined = pTags.find((tag: string[]): boolean => tag[3] === "reply");
+  if (replyTag?.[1]) {
+    return replyTag[1] as PubkeyHex;
+  }
+  const rootTag: string[] | undefined = pTags.find((tag: string[]): boolean => tag[3] === "root");
+  if (rootTag?.[1]) {
+    return rootTag[1] as PubkeyHex;
+  }
+  return (pTags[0]?.[1] as PubkeyHex) || null;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchEventWithRetry(eventId: string, relays: string[], attempts: number = 3): Promise<NostrEvent | null> {
+  for (let i = 0; i < attempts; i += 1) {
+    const event: NostrEvent | null = await fetchEventByIdCached(eventId, relays);
+    if (event) {
+      return event;
+    }
+    if (i < attempts - 1) {
+      await delay(800);
+    }
+  }
+  return null;
+}
+
+export async function loadReactionsForEvent(
+  eventId: string,
+  targetPubkey: PubkeyHex,
+  container: HTMLElement,
+): Promise<void> {
+  const relays: string[] = getRelays();
+  try {
+    const counts: Map<string, number> = await fetchReactions(eventId, relays);
+    if (counts.size === 0) {
+      container.innerHTML = "";
+      return;
+    }
+
+    const entries: Array<[string, number]> = Array.from(counts.entries());
+    entries.sort((a: [string, number], b: [string, number]): number => b[1] - a[1]);
+    const top: Array<[string, number]> = entries.slice(0, 5);
+
+    container.innerHTML = "";
+    top.forEach(([reaction, count]: [string, number]): void => {
+      const badge: HTMLSpanElement = document.createElement("span");
+      badge.className = "relative inline-flex items-center gap-1 rounded-full bg-white border border-gray-200 px-2 py-1 cursor-pointer hover:bg-gray-50 transition-colors";
+      badge.dataset.reaction = reaction;
+      const emojiEl: HTMLSpanElement = document.createElement("span");
+      emojiEl.textContent = reaction;
+      const countEl: HTMLSpanElement = document.createElement("span");
+      countEl.className = "font-semibold text-gray-700";
+      countEl.textContent = count.toString();
+      badge.appendChild(emojiEl);
+      badge.appendChild(countEl);
+
+      const tooltip: HTMLDivElement = document.createElement("div");
+      tooltip.className = "fixed w-56 rounded-lg border border-gray-200 bg-white shadow-lg p-2 text-xs text-gray-700 z-50";
+      tooltip.style.display = "none";
+      document.body.appendChild(tooltip);
+
+      let hoverTimeout: number | null = null;
+
+      const positionTooltip = (): void => {
+        const rect: DOMRect = badge.getBoundingClientRect();
+        const spacing: number = 8;
+        const top: number = rect.bottom + spacing;
+        const left: number = Math.min(rect.left, window.innerWidth - 240);
+        tooltip.style.top = `${top}px`;
+        tooltip.style.left = `${Math.max(left, 8)}px`;
+      };
+
+      const showTooltip = (): void => {
+        if (hoverTimeout) {
+          window.clearTimeout(hoverTimeout);
+          hoverTimeout = null;
+        }
+        positionTooltip();
+        tooltip.style.display = "block";
+        loadReactionDetails(eventId, reaction, tooltip);
+      };
+
+      const hideTooltip = (): void => {
+        if (hoverTimeout) {
+          window.clearTimeout(hoverTimeout);
+        }
+        hoverTimeout = window.setTimeout((): void => {
+          tooltip.style.display = "none";
+        }, 150);
+      };
+
+      badge.addEventListener("mouseenter", showTooltip);
+      badge.addEventListener("mouseleave", hideTooltip);
+      tooltip.addEventListener("mouseenter", showTooltip);
+      tooltip.addEventListener("mouseleave", hideTooltip);
+
+      window.addEventListener("scroll", () => {
+        if (tooltip.style.display !== "none") {
+          positionTooltip();
+        }
+      });
+
+      badge.addEventListener("click", (event: MouseEvent): void => {
+        event.preventDefault();
+        publishReaction(eventId, targetPubkey, reaction);
+      });
+      container.appendChild(badge);
+    });
+  } catch (error: unknown) {
+    console.warn("Failed to load reactions:", error);
+  }
+}
+
+async function loadReactionDetails(eventId: string, reaction: string, container: HTMLElement): Promise<void> {
+  container.dataset.reaction = reaction;
+  container.innerHTML = "<div class=\"text-xs text-gray-500\">Loading reactions...</div>";
+
+  const relays: string[] = getRelays();
+  try {
+    const events: NostrEvent[] = await fetchReactionEvents(eventId, relays);
+    const filtered: NostrEvent[] = events.filter(
+      (event: NostrEvent): boolean => normalizeReaction(event.content) === reaction,
+    );
+
+    if (filtered.length === 0) {
+      container.innerHTML = "<div class=\"text-xs text-gray-500\">No reactions yet.</div>";
+      return;
+    }
+
+    container.innerHTML = "";
+    const list: HTMLDivElement = document.createElement("div");
+    list.className = "space-y-2 max-h-48 overflow-auto";
+    container.appendChild(list);
+
+    await Promise.allSettled(
+      filtered.slice(0, 20).map(async (event: NostrEvent): Promise<void> => {
+        let profile: NostrProfile | null = null;
+        try {
+          profile = await fetchProfile(event.pubkey, relays);
+        } catch (error: unknown) {
+          console.warn("Failed to load profile for reaction:", error);
+        }
+
+        const npub: Npub = nip19.npubEncode(event.pubkey);
+        const name: string = getDisplayName(npub, profile);
+        const avatar: string = getAvatarURL(event.pubkey, profile);
+
+        const row: HTMLAnchorElement = document.createElement("a");
+        row.className = "flex items-center gap-2 text-sm text-gray-700 hover:text-blue-600 transition-colors";
+        row.href = `/${npub}`;
+
+        const img: HTMLImageElement = document.createElement("img");
+        img.src = avatar;
+        img.alt = name;
+        img.className = "w-6 h-6 rounded-full object-cover";
+        img.onerror = (): void => {
+          img.src = "https://placekitten.com/80/80";
+        };
+
+        const nameEl: HTMLSpanElement = document.createElement("span");
+        nameEl.textContent = name;
+
+        row.appendChild(img);
+        row.appendChild(nameEl);
+        list.appendChild(row);
+      }),
+    );
+  } catch (error: unknown) {
+    console.warn("Failed to load reaction details:", error);
+    container.innerHTML = "<div class=\"text-xs text-gray-500\">Failed to load reactions.</div>";
+  }
+}
+
+async function publishReaction(
+  eventId: string,
+  targetPubkey: PubkeyHex,
+  reaction: string,
+): Promise<void> {
+  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+  if (!storedPubkey) {
+    alert("Sign in to react.");
+    return;
+  }
+
+  const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
+    kind: 7,
+    pubkey: storedPubkey as PubkeyHex,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["e", eventId],
+      ["p", targetPubkey],
+    ],
+    content: reaction,
+  };
+
+  let signedEvent: NostrEvent;
+  if ((window as any).nostr && (window as any).nostr.signEvent) {
+    signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
+  } else {
+    const privateKey: Uint8Array | null = getSessionPrivateKey();
+    if (!privateKey) {
+      alert("Sign in to react.");
+      return;
+    }
+    signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
+  }
+
+  const relays: string[] = getRelays();
+  const promises = relays.map(async (relayUrl: string): Promise<void> => {
+    try {
+      const socket: WebSocket = new WebSocket(relayUrl);
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          socket.close();
+          resolve();
+        }, 5000);
+
+        socket.onopen = (): void => {
+          socket.send(JSON.stringify(["EVENT", signedEvent]));
+        };
+
+        socket.onmessage = (msg: MessageEvent): void => {
+          const arr: any[] = JSON.parse(msg.data);
+          if (arr[0] === "OK") {
+            clearTimeout(timeout);
+            socket.close();
+            resolve();
+          }
+        };
+
+        socket.onerror = (): void => {
+          clearTimeout(timeout);
+          socket.close();
+          resolve();
+        };
+      });
+    } catch (e) {
+      console.warn(`Failed to publish reaction to ${relayUrl}:`, e);
+    }
+  });
+
+  await Promise.allSettled(promises);
 }
 
 export function renderEvent(
@@ -76,7 +476,9 @@ export function renderEvent(
     ),
   );
   const parentEventId: string | null = resolveParentEventId(event);
-  const contentWithNostrLinks: string = event.content.replace(
+  const parentAuthorPubkey: PubkeyHex | null = parentEventId ? resolveParentAuthorPubkey(event) : null;
+  const contentWithEmoji: string = replaceEmojiShortcodes(event.content);
+  const contentWithNostrLinks: string = contentWithEmoji.replace(
     /(nostr:(?:nevent1|note1)[0-9a-z]+)/gi,
     (eventRef: string): string => {
       const path: string = `/${eventRef.replace(/^nostr:/i, "")}`;
@@ -125,6 +527,8 @@ export function renderEvent(
 			        <div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>
             <div class="referenced-events-container space-y-2"></div>
 		        <div class="ogp-container"></div>
+            <div class="reactions-container mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
+            <div class="reactions-details mt-2" style="display: none;"></div>
             <div class="mt-2 flex items-center justify-between gap-2">
                 ${dateHtml}
                 ${deleteButtonHtml}
@@ -136,7 +540,7 @@ export function renderEvent(
   if (parentEventId) {
     const parentContainer: HTMLElement | null = div.querySelector(".parent-event-container");
     if (parentContainer) {
-      renderParentEventCard(parentEventId, parentContainer);
+      renderParentEventCard(parentEventId, parentAuthorPubkey, parentContainer);
     }
   }
   if (mentionNpubToPubkey.size > 0) {
@@ -213,7 +617,11 @@ function resolveParentEventId(event: NostrEvent): string | null {
   return eTags[eTags.length - 1]?.[1] || null;
 }
 
-async function renderParentEventCard(parentEventId: string, container: HTMLElement): Promise<void> {
+async function renderParentEventCard(
+  parentEventId: string,
+  parentAuthorPubkey: PubkeyHex | null,
+  container: HTMLElement,
+): Promise<void> {
   container.innerHTML = "";
   const card: HTMLDivElement = document.createElement("div");
   card.className = "border border-amber-200 bg-amber-50 rounded-lg p-3";
@@ -222,9 +630,17 @@ async function renderParentEventCard(parentEventId: string, container: HTMLEleme
 
   try {
     const relays: string[] = getRelays();
-    const parentEvent: NostrEvent | null = await fetchEventByIdCached(parentEventId, relays);
+    if (parentAuthorPubkey) {
+      const deleted: boolean = await isEventDeleted(parentEventId, parentAuthorPubkey, relays);
+      if (deleted) {
+        card.textContent = "Parent post was deleted.";
+        return;
+      }
+    }
+
+    const parentEvent: NostrEvent | null = await fetchEventWithRetry(parentEventId, relays, 3);
     if (!parentEvent) {
-      card.textContent = "Parent post not found.";
+      card.textContent = "Failed to load parent post.";
       return;
     }
 
@@ -232,9 +648,10 @@ async function renderParentEventCard(parentEventId: string, container: HTMLEleme
     const parentNpub: Npub = nip19.npubEncode(parentEvent.pubkey);
     const parentName: string = getDisplayName(parentNpub, parentProfile);
     const parentAvatar: string = getAvatarURL(parentEvent.pubkey, parentProfile);
-    const preview: string = parentEvent.content.length > 220
-      ? `${parentEvent.content.slice(0, 220)}...`
-      : parentEvent.content;
+    const parentContent: string = replaceEmojiShortcodes(parentEvent.content);
+    const preview: string = parentContent.length > 220
+      ? `${parentContent.slice(0, 220)}...`
+      : parentContent;
     const parentPath: string = `/${nip19.neventEncode({ id: parentEvent.id })}`;
 
     card.innerHTML = `
@@ -362,10 +779,14 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
       const decoded = nip19.decode(eventRef);
       let eventId: string | undefined;
       let relayHints: string[] = [];
+      let referencedAuthorPubkey: PubkeyHex | null = null;
       if (decoded.type === "nevent") {
         const data: any = decoded.data;
         eventId = data?.id || (typeof data === "string" ? data : undefined);
         relayHints = Array.isArray(data?.relays) ? data.relays : [];
+        if (data?.author && typeof data.author === "string") {
+          referencedAuthorPubkey = data.author as PubkeyHex;
+        }
       } else if (decoded.type === "note") {
         eventId = typeof decoded.data === "string" ? decoded.data : undefined;
       } else {
@@ -379,9 +800,17 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
       }
 
       const relaysToUse: string[] = relayHints.length > 0 ? relayHints : currentRelays;
-      const referencedEvent: NostrEvent | null = await fetchEventByIdCached(eventId, relaysToUse);
+      if (referencedAuthorPubkey) {
+        const deleted: boolean = await isEventDeleted(eventId, referencedAuthorPubkey, relaysToUse);
+        if (deleted) {
+          card.textContent = "Referenced event was deleted.";
+          continue;
+        }
+      }
+
+      const referencedEvent: NostrEvent | null = await fetchEventWithRetry(eventId, relaysToUse, 3);
       if (!referencedEvent) {
-        card.textContent = "Referenced event not found.";
+        card.textContent = "Failed to load referenced event.";
         continue;
       }
 
@@ -389,9 +818,10 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
       const referencedNpub: Npub = nip19.npubEncode(referencedEvent.pubkey);
       const referencedName: string = getDisplayName(referencedNpub, referencedProfile);
       const referencedAvatar: string = getAvatarURL(referencedEvent.pubkey, referencedProfile);
-      const referencedText: string = referencedEvent.content.length > 180
-        ? `${referencedEvent.content.slice(0, 180)}...`
-        : referencedEvent.content;
+      const referencedContent: string = replaceEmojiShortcodes(referencedEvent.content);
+      const referencedText: string = referencedContent.length > 180
+        ? `${referencedContent.slice(0, 180)}...`
+        : referencedContent;
       const referencedPath: string = `/${eventRef}`;
 
       card.innerHTML = `

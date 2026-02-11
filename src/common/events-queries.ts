@@ -1,4 +1,4 @@
-import type { NostrEvent, PubkeyHex } from "../types/nostr";
+import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
 export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): Promise<PubkeyHex[]> {
   console.log(`Fetching follow list for ${pubkeyHex}`);
@@ -259,4 +259,64 @@ export async function isEventDeleted(
       }
     });
   });
+}
+
+export async function fetchRepliesForEvent(eventId: string, relays: string[]): Promise<NostrEvent[]> {
+  if (relays.length === 0) {
+    return [];
+  }
+
+  const results: Map<string, NostrEvent> = new Map();
+
+  const promises = relays.map(async (relayUrl: string): Promise<void> => {
+    try {
+      const socket: WebSocket = new WebSocket(relayUrl);
+      await new Promise<void>((resolve) => {
+        let settled: boolean = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          socket.close();
+          resolve();
+        };
+
+        const timeout = setTimeout(() => {
+          finish();
+        }, 6000);
+
+        socket.onopen = (): void => {
+          const subId: string = "replies-" + Math.random().toString(36).slice(2);
+          const req: [string, string, { kinds: number[]; "#e": string[]; limit: number }] = [
+            "REQ",
+            subId,
+            { kinds: [1], "#e": [eventId], limit: 200 },
+          ];
+          socket.send(JSON.stringify(req));
+        };
+
+        socket.onmessage = (msg: MessageEvent): void => {
+          const arr: any[] = JSON.parse(msg.data);
+          if (arr[0] === "EVENT" && arr[2]) {
+            const event: NostrEvent = arr[2];
+            results.set(event.id, event);
+          } else if (arr[0] === "EOSE") {
+            finish();
+          }
+        };
+
+        socket.onerror = (): void => {
+          finish();
+        };
+      });
+    } catch (e) {
+      console.warn(`Failed to fetch replies from ${relayUrl}:`, e);
+    }
+  });
+
+  await Promise.allSettled(promises);
+
+  const events: NostrEvent[] = Array.from(results.values());
+  events.sort((a: NostrEvent, b: NostrEvent): number => a.created_at - b.created_at);
+  return events;
 }

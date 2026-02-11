@@ -1,5 +1,5 @@
-import { finalizeEvent } from "https://esm.sh/nostr-tools@2.17.0";
-import type { NostrEvent, PubkeyHex } from "../types/nostr";
+import { finalizeEvent } from 'nostr-tools';
+import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
 interface ComposeOverlayOptions {
   composeButton: HTMLElement | null;

@@ -1,4 +1,4 @@
-import type { NostrProfile, PubkeyHex } from "../types/nostr";
+import type { NostrProfile, PubkeyHex } from "../../../types/nostr";
 
 interface ProfileCacheStore {
   order: PubkeyHex[];

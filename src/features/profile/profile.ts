@@ -1,6 +1,6 @@
-import { getAvatarURL, getDisplayName } from "./utils";
+import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
 import { getCachedProfile, setCachedProfile } from "./profile-cache.js";
-import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
+import type { NostrProfile, PubkeyHex, Npub } from "../../../types/nostr";
 
 interface FetchProfileOptions {
     usePersistentCache?: boolean;

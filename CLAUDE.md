@@ -29,13 +29,17 @@ The dev server runs on http://localhost:5173 by default. The production Docker c
 
 ### Module Structure
 
-The codebase is organized into modular TypeScript files:
+The codebase is organized into feature folders with shared modules:
 
-- **[src/main.ts](src/main.ts)** - Vite entry point (imports app.ts)
-- **[src/app.ts](src/app.ts)** - Main application logic; handles client-side routing (/home, /global, /{npub}), timeline management, and navigation
-- **[src/profile.ts](src/profile.ts)** - Fetches and renders Nostr profiles (kind 0 events)
-- **[src/events.ts](src/events.ts)** - Fetches and renders Nostr posts (kind 1 events) with pagination for home/global timelines
-- **[src/utils.ts](src/utils.ts)** - Helper functions for display names, avatars, OGP metadata, Twitter embeds
+- **[src/app/main.ts](src/app/main.ts)** - Vite entry point (imports app.ts)
+- **[src/app/app.ts](src/app/app.ts)** - Main application logic; handles client-side routing (/home, /global, /{npub}), timeline management, and navigation
+- **[src/features/profile/profile.ts](src/features/profile/profile.ts)** - Fetches and renders Nostr profiles (kind 0 events)
+- **[src/features/profile/profile-events.ts](src/features/profile/profile-events.ts)** - Profile post loading (kind 1) with pagination
+- **[src/features/global/global-timeline.ts](src/features/global/global-timeline.ts)** - Global timeline loading logic
+- **[src/features/home/home-timeline.ts](src/features/home/home-timeline.ts)** - Home timeline loading logic
+- **[src/common/event-render.ts](src/common/event-render.ts)** - Event card rendering, OGP, delete action, nevent reference cards
+- **[src/common/events-queries.ts](src/common/events-queries.ts)** - Follow list, event fetch, delete checks
+- **[src/utils/utils.ts](src/utils/utils.ts)** - Helper functions for display names, avatars, OGP metadata, Twitter embeds
 - **[src/index.html](src/index.html)** - HTML template with navigation, timeline container, and search sidebar
 - **[types/nostr.ts](types/nostr.ts)** - TypeScript interfaces for Nostr protocol types
 - **[vite.config.ts](vite.config.ts)** - Vite configuration with Tailwind CSS integration
@@ -45,7 +49,7 @@ The codebase is organized into modular TypeScript files:
 **Home Timeline (logged in users):**
 1. User connects via NIP-07 browser extension (Alby, nos2x, etc.)
 2. App fetches user's follow list (kind 3 event) from relays
-3. Loads posts (kind 1) from followed users via `events.ts`
+3. Loads posts (kind 1) from followed users via `features/home/home-timeline.ts`
 4. Background polling checks for new posts every 30 seconds
 5. Displays notification when new posts are available
 
@@ -57,9 +61,9 @@ The codebase is organized into modular TypeScript files:
 **Profile View (/{npub}):**
 1. Parses npub from URL path
 2. Decodes npub to hex pubkey using nostr-tools
-3. Fetches profile metadata (kind 0) from relays via `profile.ts`
+3. Fetches profile metadata (kind 0) from relays via `features/profile/profile.ts`
 4. Renders profile with avatar, banner, and bio
-5. Fetches user's posts (kind 1) from relays via `events.ts`
+5. Fetches user's posts (kind 1) from relays via `features/profile/profile-events.ts`
 6. "Load More" button fetches older posts using pagination
 
 ### Relay Communication Pattern
@@ -76,7 +80,7 @@ The app uses a **parallel multi-relay strategy**:
 Vite handles the build process:
 1. Type-checks TypeScript files with `tsc --noEmit`
 2. Bundles and optimizes code with Vite build
-3. Processes Tailwind CSS (imported in main.ts)
+3. Processes Tailwind CSS (imported in app/main.ts)
 4. Outputs optimized assets to `dist/` directory
 5. Generates source maps for debugging
 
@@ -156,7 +160,7 @@ DOM elements are null-checked before use. All async operations use try/catch.
 
 ## Relay Configuration
 
-Default relays defined in [src/app.ts:10-14](src/app.ts#L10-L14):
+Default relays defined in [src/features/relays/relays.ts](src/features/relays/relays.ts):
 ```typescript
 const relays: string[] = [
   "wss://nos.lol",

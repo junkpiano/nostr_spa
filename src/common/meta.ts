@@ -1,4 +1,4 @@
-import type { Npub } from "../types/nostr";
+import type { Npub } from "../../types/nostr";
 
 function upsertMetaTag(property: string, content: string): void {
   const selector: string = `meta[property="${property}"]`;

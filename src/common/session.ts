@@ -1,5 +1,5 @@
-import { nip19, getPublicKey } from "https://esm.sh/nostr-tools@2.17.0";
-import type { PubkeyHex, Npub } from "../types/nostr";
+import { nip19, getPublicKey } from 'nostr-tools';
+import type { PubkeyHex, Npub } from "../../types/nostr";
 
 let sessionPrivateKey: Uint8Array | null = null;
 

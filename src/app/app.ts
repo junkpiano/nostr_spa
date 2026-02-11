@@ -1,18 +1,21 @@
-import { nip19 } from "https://esm.sh/nostr-tools@2.17.0";
-import { fetchProfile, renderProfile } from "./profile.js";
-import { loadEvents, loadGlobalTimeline, loadHomeTimeline } from "./events.js";
-import { setupComposeOverlay } from "./compose.js";
-import { setupImageOverlay } from "./overlays.js";
-import { getRelays, setRelays, normalizeRelayUrl } from "./relays.js";
-import { loadRelaysPage } from "./relays-page.js";
-import { setupFollowToggle, publishEventToRelays } from "./follow.js";
-import { setupSearchBar } from "./search.js";
-import { setupNavigation, setActiveNav } from "./navigation.js";
-import { clearSessionPrivateKey, getSessionPrivateKey, setSessionPrivateKeyFromRaw, updateLogoutButton } from "./session.js";
-import { showInputForm } from "./welcome.js";
-import { loadEventPage } from "./event-page.js";
-import { loadUserHomeTimeline } from "./home-loader.js";
-import type { NostrProfile, PubkeyHex, Npub } from "../types/nostr";
+import { nip19 } from 'nostr-tools';
+import { fetchProfile, renderProfile } from "../features/profile/profile.js";
+import { loadGlobalTimeline } from "../features/global/global-timeline.js";
+import { loadHomeTimeline } from "../features/home/home-timeline.js";
+import { loadEvents } from "../features/profile/profile-events.js";
+import { setupComposeOverlay } from "../common/compose.js";
+import { setupImageOverlay } from "../common/overlays.js";
+import { getRelays, setRelays, normalizeRelayUrl } from "../features/relays/relays.js";
+import { loadRelaysPage } from "../features/relays/relays-page.js";
+import { setupFollowToggle, publishEventToRelays } from "../features/profile/follow.js";
+import { setupSearchBar } from "../common/search.js";
+import { setupNavigation, setActiveNav } from "../common/navigation.js";
+import { clearSessionPrivateKey, getSessionPrivateKey, setSessionPrivateKeyFromRaw, updateLogoutButton } from "../common/session.js";
+import { clearNotifications, loadNotificationsPage } from "../features/notifications/notifications.js";
+import { showInputForm } from "../features/home/welcome.js";
+import { loadEventPage } from "../features/event/event-page.js";
+import { loadUserHomeTimeline } from "../features/home/home-loader.js";
+import type { NostrProfile, PubkeyHex, Npub } from "../../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
 const profileSection: HTMLElement | null = document.getElementById("profile-section");
@@ -100,6 +103,32 @@ document.addEventListener("DOMContentLoaded", (): void => {
     },
   });
 
+  document.addEventListener("click", (event: MouseEvent): void => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      return;
+    }
+
+    const target: HTMLElement | null = event.target as HTMLElement | null;
+    const anchor: HTMLAnchorElement | null = target?.closest("a");
+    if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) {
+      return;
+    }
+
+    const href: string | null = anchor.getAttribute("href");
+    if (!href || !href.startsWith("/")) {
+      return;
+    }
+
+    const url: URL = new URL(href, window.location.origin);
+    if (url.origin !== window.location.origin) {
+      return;
+    }
+
+    event.preventDefault();
+    window.history.pushState(null, "", url.pathname);
+    handleRoute();
+  });
+
   // Handle initial route
   handleRoute();
 });
@@ -119,6 +148,12 @@ window.addEventListener("popstate", (): void => {
 // Router function
 function handleRoute(): void {
   const path: string = window.location.pathname;
+  updateLogoutButton(composeButton);
+  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+  const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
+  if (notificationsButton) {
+    notificationsButton.style.display = storedPubkey ? "" : "none";
+  }
 
   if (path === "/" || path === "") {
     // Redirect to /home
@@ -128,6 +163,18 @@ function handleRoute(): void {
     loadHomePage();
   } else if (path === "/global") {
     loadGlobalPage();
+  } else if (path === "/notifications") {
+    const homeButton: HTMLElement | null = document.getElementById("nav-home");
+    const globalButton: HTMLElement | null = document.getElementById("nav-global");
+    const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+    const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
+    const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+    setActiveNav(homeButton, globalButton, relaysButton, profileLink, null);
+    if (notificationsButton) {
+      notificationsButton.classList.remove("text-gray-700");
+      notificationsButton.classList.add("bg-indigo-100", "text-indigo-700");
+    }
+    loadNotificationsPage({ relays, limit: 50 });
   } else if (path === "/relays") {
     loadRelaysPage({
       closeAllWebSockets,
@@ -181,8 +228,13 @@ function handleRoute(): void {
       const homeButton: HTMLElement | null = document.getElementById("nav-home");
       const globalButton: HTMLElement | null = document.getElementById("nav-global");
       const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+      const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
       const profileLink: HTMLElement | null = document.getElementById("nav-profile");
       setActiveNav(homeButton, globalButton, relaysButton, profileLink, profileLink);
+      if (notificationsButton) {
+        notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
+        notificationsButton.classList.add("text-gray-700");
+      }
       startApp(npub);
     } else {
       if (output) {
@@ -202,9 +254,14 @@ async function loadHomePage(): Promise<void> {
   // Set active navigation
   const homeButton: HTMLElement | null = document.getElementById("nav-home");
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
+  const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
   const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const profileLink: HTMLElement | null = document.getElementById("nav-profile");
   setActiveNav(homeButton, globalButton, relaysButton, profileLink, homeButton);
+  if (notificationsButton) {
+    notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
+    notificationsButton.classList.add("text-gray-700");
+  }
 
   // Update logout button visibility
   updateLogoutButton(composeButton);
@@ -297,9 +354,14 @@ async function loadGlobalPage(): Promise<void> {
   // Set active navigation
   const homeButton: HTMLElement | null = document.getElementById("nav-home");
   const globalButton: HTMLElement | null = document.getElementById("nav-global");
+  const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
   const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
   const profileLink: HTMLElement | null = document.getElementById("nav-profile");
   setActiveNav(homeButton, globalButton, relaysButton, profileLink, globalButton);
+  if (notificationsButton) {
+    notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
+    notificationsButton.classList.add("text-gray-700");
+  }
 
   // Stop background fetching when switching away from home timeline
   if (backgroundFetchInterval) {
@@ -376,6 +438,7 @@ async function startApp(npub: Npub): Promise<void> {
 function handleLogout(): void {
   localStorage.removeItem("nostr_pubkey");
   clearSessionPrivateKey();
+  clearNotifications();
 
   cachedHomeTimeline = null;
 

@@ -1,5 +1,6 @@
-import { fetchFollowList, loadHomeTimeline } from "./events.js";
-import type { PubkeyHex } from "../types/nostr";
+import { fetchFollowList } from "../../common/events-queries.js";
+import { loadHomeTimeline } from "./home-timeline.js";
+import type { PubkeyHex } from "../../../types/nostr";
 
 interface LoadUserHomeTimelineOptions {
   pubkeyHex: PubkeyHex;

@@ -1,4 +1,5 @@
-import type { NostrProfile, PubkeyHex, Npub, OGPResponse } from "../types/nostr";
+import emojiDictionary from 'emoji-dictionary';
+import type { NostrProfile, PubkeyHex, Npub, OGPResponse } from "../../types/nostr";
 
 const ogpCache: Map<string, Promise<OGPResponse | null>> = new Map();
 const twitterEmbedCache: Map<string, Promise<string | null>> = new Map();
@@ -13,6 +14,13 @@ export function getAvatarURL(pubkey: PubkeyHex, profile: NostrProfile | null): s
 
 export function getDisplayName(npub: Npub, profile: NostrProfile | null): string {
     return profile?.nip05 || profile?.name || shortenNpub(npub);
+}
+
+export function replaceEmojiShortcodes(content: string): string {
+  return content.replace(/:([a-z0-9_+-]+):/gi, (match: string, code: string): string => {
+    const emoji: string | undefined = emojiDictionary.getEmoji(code);
+    return emoji || match;
+  });
 }
 
 /**

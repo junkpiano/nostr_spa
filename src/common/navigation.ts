@@ -36,6 +36,7 @@ export function setActiveNav(
 export function setupNavigation(options: NavigationOptions): void {
   const homeButton: HTMLElement | null = document.getElementById('nav-home');
   const globalButton: HTMLElement | null = document.getElementById('nav-global');
+  const notificationsButton: HTMLElement | null = document.getElementById('nav-notifications');
   const relaysButton: HTMLElement | null = document.getElementById('nav-relays');
   const logoutButton: HTMLElement | null = document.getElementById('nav-logout');
 
@@ -49,6 +50,13 @@ export function setupNavigation(options: NavigationOptions): void {
   if (globalButton) {
     globalButton.addEventListener('click', (): void => {
       window.history.pushState(null, '', '/global');
+      options.handleRoute();
+    });
+  }
+
+  if (notificationsButton) {
+    notificationsButton.addEventListener('click', (): void => {
+      window.history.pushState(null, '', '/notifications');
       options.handleRoute();
     });
   }

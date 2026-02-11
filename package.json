@@ -15,5 +15,9 @@
         "tailwindcss": "^3.4.19",
         "typescript": "^5.9.3",
         "vite": "^6.4.1"
+    },
+    "dependencies": {
+        "emoji-dictionary": "^1.0.12",
+        "nostr-tools": "^2.23.0"
     }
 }

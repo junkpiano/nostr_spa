@@ -1,4 +1,4 @@
-# noxtr (Developer README)
+# noxtr
 
 Nostr SPA built with TypeScript + Vite.
 This README is for developers working on this repository.
@@ -10,6 +10,7 @@ This README is for developers working on this repository.
 - Tailwind CSS
 - nostr-tools (via ESM import)
 - Browser WebSocket API (relay access)
+- Bun
 
 ## Local Development
 
@@ -46,24 +47,39 @@ npm run preview
 
 ```text
 src/
-  app.ts              # App orchestration, routing, timeline state
-  events.ts           # Home/global timeline loading logic
-  events-queries.ts   # Follow list, event fetch, delete checks
-  event-render.ts     # Event card rendering, OGP, delete action, nevent reference cards
-  home-loader.ts      # Initial home timeline loader
-  event-page.ts       # nevent page loader
-  welcome.ts          # Login/welcome screen flow
-  follow.ts           # Follow/unfollow + publish helper
-  relays.ts           # Relay config storage/helpers
-  relays-page.ts      # Relay management page UI
-  compose.ts          # Compose overlay + shortcuts
-  overlays.ts         # Image overlay
-  search.ts           # In-page post search
-  navigation.ts       # Nav setup + active state
-  profile.ts          # Profile fetch/render
-  meta.ts             # Dynamic OG/Twitter meta tags
-  utils.ts            # Shared utility functions
-  main.ts             # App entrypoint
+  app/
+    app.ts              # App orchestration, routing, timeline state
+    main.ts             # App entrypoint
+  common/
+    compose.ts          # Compose overlay + shortcuts
+    event-render.ts     # Event card rendering, OGP, delete action, nevent reference cards
+    events-queries.ts   # Follow list, event fetch, delete checks
+    meta.ts             # Dynamic OG/Twitter meta tags
+    navigation.ts       # Nav setup + active state
+    overlays.ts         # Image overlay
+    search.ts           # In-page post search
+    session.ts          # Session key handling + logout UI updates
+    timeline-cache.ts   # Shared profile fetch cache for timelines
+    types.ts            # Shared UI types
+  features/
+    event/
+      event-page.ts     # nevent page loader
+    global/
+      global-timeline.ts # Global timeline loading logic
+    home/
+      home-loader.ts    # Initial home timeline loader
+      home-timeline.ts  # Home timeline loading logic
+      welcome.ts        # Login/welcome screen flow
+    profile/
+      follow.ts         # Follow/unfollow + publish helper
+      profile.ts        # Profile fetch/render
+      profile-cache.ts  # Persistent profile cache
+      profile-events.ts # Profile timeline loading logic
+    relays/
+      relays.ts         # Relay config storage/helpers
+      relays-page.ts    # Relay management page UI
+  utils/
+    utils.ts            # Shared utility functions
   index.html
   styles.css
 

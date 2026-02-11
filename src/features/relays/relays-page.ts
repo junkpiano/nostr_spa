@@ -1,4 +1,4 @@
-import type { SetActiveNavFn } from "./types.js";
+import type { SetActiveNavFn } from "../../common/types.js";
 
 interface RelaysPageOptions {
   closeAllWebSockets: () => void;

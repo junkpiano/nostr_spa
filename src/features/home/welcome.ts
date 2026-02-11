@@ -1,4 +1,4 @@
-import type { PubkeyHex } from "../types/nostr";
+import type { PubkeyHex } from "../../../types/nostr";
 
 interface ShowInputFormOptions {
   output: HTMLElement | null;

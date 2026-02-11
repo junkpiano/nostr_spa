@@ -1,5 +1,7 @@
-import { fetchFollowList } from './events.js';
-import type { NostrEvent, PubkeyHex } from '../types/nostr';
+import { finalizeEvent } from 'nostr-tools';
+import { fetchFollowList } from '../../common/events-queries.js';
+import { getSessionPrivateKey } from '../../common/session.js';
+import type { NostrEvent, PubkeyHex } from '../../../types/nostr';
 
 interface FollowToggleOptions {
   getRelays: () => string[];
@@ -29,8 +31,10 @@ export async function setupFollowToggle(
   const button: HTMLButtonElement | null = document.getElementById('follow-toggle') as HTMLButtonElement;
   if (!button) return;
 
-  if (!(window as any).nostr || !(window as any).nostr.signEvent) {
-    button.textContent = 'Follow (NIP-07 required)';
+  const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
+  const hasPrivateKey: boolean = Boolean(getSessionPrivateKey());
+  if (!hasExtension && !hasPrivateKey) {
+    button.textContent = 'Follow (sign-in required)';
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-not-allowed');
     return;
@@ -84,7 +88,16 @@ export async function setupFollowToggle(
         content: '',
       };
 
-      const signedEvent: NostrEvent = await (window as any).nostr.signEvent(unsignedEvent);
+      let signedEvent: NostrEvent;
+      if ((window as any).nostr && (window as any).nostr.signEvent) {
+        signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
+      } else {
+        const privateKey: Uint8Array | null = getSessionPrivateKey();
+        if (!privateKey) {
+          throw new Error('No signing method available');
+        }
+        signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
+      }
       await options.publishEvent(signedEvent, options.getRelays());
 
       isFollowing = !isFollowing;
