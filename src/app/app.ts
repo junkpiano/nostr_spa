@@ -109,7 +109,7 @@ document.addEventListener("DOMContentLoaded", (): void => {
     }
 
     const target: HTMLElement | null = event.target as HTMLElement | null;
-    const anchor: HTMLAnchorElement | null = target?.closest("a");
+    const anchor: HTMLAnchorElement | null = target ? target.closest("a") : null;
     if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) {
       return;
     }
