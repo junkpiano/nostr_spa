@@ -622,11 +622,13 @@ export function renderEvent(
     }
   }
 
-  const allReferencedEventRefs: string[] = [];
+  const allReferencedEventRefs: string[] = [...referencedEventRefs];
   if (repostEventId) {
     try {
       const repostRef: string = nip19.neventEncode({ id: repostEventId });
-      allReferencedEventRefs.push(repostRef);
+      if (!allReferencedEventRefs.includes(repostRef)) {
+        allReferencedEventRefs.unshift(repostRef);
+      }
     } catch (e) {
       console.warn("Failed to encode repost event ref:", e);
     }
