@@ -5,6 +5,7 @@ import { loadReactionsForEvent, renderEvent } from "../../common/event-render.js
 import { setEventMeta } from "../../common/meta.js";
 import { setActiveNav } from "../../common/navigation.js";
 import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
+import { getProfile as getCachedProfile, getEvent as getCachedEvent } from "../../common/db/index.js";
 import type { NostrEvent, NostrProfile, PubkeyHex, Npub } from "../../../types/nostr";
 
 interface LoadEventPageOptions {
@@ -45,15 +46,6 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     options.profileSection.className = "";
   }
 
-  if (options.output) {
-    options.output.innerHTML = `
-      <div class="text-center py-12">
-        <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-        <p class="text-gray-700 font-semibold">Loading event...</p>
-      </div>
-    `;
-  }
-
   try {
     const decoded = nip19.decode(options.eventRef);
     let eventId: string | undefined;
@@ -72,7 +64,26 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     }
 
     const relaysToUse: string[] = relayHints.length > 0 ? relayHints : options.relays;
-    const event = await fetchEventById(eventId, relaysToUse);
+
+    // Try to load event from IndexedDB cache first
+    let event: NostrEvent | null = await getCachedEvent(eventId);
+    let fromCache = !!event;
+
+    // Only show loading spinner if not in cache
+    if (!event && options.output) {
+      options.output.innerHTML = `
+        <div class="text-center py-12">
+          <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+          <p class="text-gray-700 font-semibold">Loading event...</p>
+        </div>
+      `;
+    }
+
+    // If not in cache, fetch from relays
+    if (!event) {
+      event = await fetchEventById(eventId, relaysToUse);
+    }
+
     if (!isRouteActive()) {
       return;
     }
@@ -87,10 +98,19 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
 
     const npubStr: Npub = nip19.npubEncode(event.pubkey);
     setEventMeta(event, npubStr);
-    // Render immediately to reduce perceived delay.
-    renderEvent(event, null, npubStr, event.pubkey, options.output);
+
+    // Try to get profile from IndexedDB cache first for instant render
+    const cachedProfile: NostrProfile | null = await getCachedProfile(event.pubkey);
+    renderEvent(event, cachedProfile, npubStr, event.pubkey, options.output);
+
+    // Start loading reactions immediately in parallel (don't wait)
+    const reactionsContainer: HTMLElement | null = options.output.querySelector(".reactions-container");
+    const reactionsPromise = reactionsContainer
+      ? loadReactionsForEvent(event.id, event.pubkey as PubkeyHex, reactionsContainer)
+      : Promise.resolve();
 
     // Run slow checks/metadata fetches in parallel after first paint.
+    // Always fetch profile from relays to get latest version
     const [deleted, eventProfile] = await Promise.all([
       isEventDeleted(event.id, event.pubkey as PubkeyHex, relaysToUse),
       fetchProfile(event.pubkey, relaysToUse),
@@ -104,6 +124,7 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
       return;
     }
 
+    // Update profile if we got one from relays (whether cached or not)
     if (eventProfile) {
       const eventCard: HTMLElement | null = options.output.querySelector(".event-container");
       const nameEl: HTMLElement | null = eventCard?.querySelector(".event-username") as HTMLElement | null;
@@ -112,19 +133,20 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
         nameEl.textContent = `👤 ${getDisplayName(npubStr, eventProfile)}`;
       }
       if (avatarEl) {
-        avatarEl.src = getAvatarURL(event.pubkey, eventProfile);
+        const avatarUrl = getAvatarURL(event.pubkey, eventProfile);
+        avatarEl.src = avatarUrl;
       }
-    }
-
-    const reactionsContainer: HTMLElement | null = options.output.querySelector(".reactions-container");
-    if (reactionsContainer) {
-      await loadReactionsForEvent(event.id, event.pubkey as PubkeyHex, reactionsContainer);
     }
 
     if (!isRouteActive()) {
       return;
     }
-    await renderReplyTree(event, relaysToUse, options.output);
+
+    // Wait for reactions and replies in parallel
+    await Promise.all([
+      reactionsPromise,
+      renderReplyTree(event, relaysToUse, options.output)
+    ]);
   } catch (error: unknown) {
     console.error("Failed to load nevent:", error);
     if (options.output) {
@@ -191,12 +213,27 @@ async function renderReplyTree(
 
   const allPubkeys: PubkeyHex[] = Array.from(new Set(replies.map((event: NostrEvent): PubkeyHex => event.pubkey)));
   const profiles: Map<PubkeyHex, NostrProfile | null> = new Map();
+
+  // First, try to get profiles from IndexedDB cache
   await Promise.allSettled(
     allPubkeys.map(async (pubkey: PubkeyHex): Promise<void> => {
-      const profile: NostrProfile | null = await fetchProfile(pubkey, relays);
-      profiles.set(pubkey, profile);
+      const cached = await getCachedProfile(pubkey);
+      if (cached) {
+        profiles.set(pubkey, cached);
+      }
     }),
   );
+
+  // Then fetch missing profiles from relays
+  const missingPubkeys = allPubkeys.filter((pk) => !profiles.has(pk));
+  if (missingPubkeys.length > 0) {
+    await Promise.allSettled(
+      missingPubkeys.map(async (pubkey: PubkeyHex): Promise<void> => {
+        const profile: NostrProfile | null = await fetchProfile(pubkey, relays);
+        profiles.set(pubkey, profile);
+      }),
+    );
+  }
 
   const renderNode = (event: NostrEvent, depth: number): void => {
     const wrapper: HTMLDivElement = document.createElement("div");

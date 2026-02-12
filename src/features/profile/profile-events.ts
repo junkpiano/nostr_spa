@@ -25,7 +25,9 @@ export async function loadEvents(
   const bufferedEvents: NostrEvent[] = [];
 
   // === PHASE 2: Cache-first loading ===
-  const isInitialLoad = untilTimestamp >= Date.now() - 60000;
+  const isInitialLoad = untilTimestamp >= Date.now() / 1000 - 60; // Within last minute = initial load
+  const originalUntilTimestamp = untilTimestamp; // Save original to ensure we fetch latest
+
   if (isInitialLoad) {
     try {
       const cached = await getCachedTimeline("user", pubkeyHex, { limit: 50 });
@@ -42,13 +44,16 @@ export async function loadEvents(
 
           const npubStr: Npub = nip19.npubEncode(event.pubkey);
           renderEvent(event, profile, npubStr, event.pubkey, output);
-          untilTimestamp = Math.min(untilTimestamp, event.created_at);
           anyEventLoaded = true;
         }
 
         if (connectingMsg) {
           connectingMsg.style.display = "none";
         }
+
+        // IMPORTANT: Don't update untilTimestamp from cache on initial load
+        // We want to fetch the LATEST posts from relays, not continue from cache
+        untilTimestamp = originalUntilTimestamp;
       }
     } catch (error) {
       console.error("[ProfileEvents] Failed to load from cache:", error);
