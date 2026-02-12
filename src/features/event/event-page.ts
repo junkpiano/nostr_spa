@@ -71,6 +71,7 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
 
     // Only show loading spinner if not in cache
     if (!event && options.output) {
+      if (!isRouteActive()) return; // Guard before DOM update
       options.output.innerHTML = `
         <div class="text-center py-12">
           <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
@@ -89,9 +90,11 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     }
 
     if (!options.output) return;
+    if (!isRouteActive()) return; // Guard before DOM update
     options.output.innerHTML = "";
 
     if (!event) {
+      if (!isRouteActive()) return; // Guard before DOM update
       options.output.innerHTML = "<p class='text-red-500'>Event not found on the configured relays.</p>";
       return;
     }
@@ -101,6 +104,7 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
 
     // Try to get profile from IndexedDB cache first for instant render
     const cachedProfile: NostrProfile | null = await getCachedProfile(event.pubkey);
+    if (!isRouteActive()) return; // Guard before render
     renderEvent(event, cachedProfile, npubStr, event.pubkey, options.output);
 
     // Start loading reactions immediately in parallel (don't wait)
@@ -120,12 +124,14 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     }
 
     if (deleted) {
+      if (!isRouteActive()) return; // Guard before DOM update
       options.output.innerHTML = "<p class='text-gray-600'>This event was deleted by the author.</p>";
       return;
     }
 
     // Update profile if we got one from relays (whether cached or not)
     if (eventProfile) {
+      if (!isRouteActive()) return; // Guard before DOM update
       const eventCard: HTMLElement | null = options.output.querySelector(".event-container");
       const nameEl: HTMLElement | null = eventCard?.querySelector(".event-username") as HTMLElement | null;
       const avatarEl: HTMLImageElement | null = eventCard?.querySelector(".event-avatar") as HTMLImageElement | null;
@@ -145,7 +151,7 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     // Wait for reactions and replies in parallel
     await Promise.all([
       reactionsPromise,
-      renderReplyTree(event, relaysToUse, options.output)
+      renderReplyTree(event, relaysToUse, options.output, isRouteActive)
     ]);
   } catch (error: unknown) {
     console.error("Failed to load nevent:", error);
@@ -173,8 +179,10 @@ async function renderReplyTree(
   rootEvent: NostrEvent,
   relays: string[],
   output: HTMLElement,
+  isRouteActive: () => boolean,
 ): Promise<void> {
   const replies: NostrEvent[] = await fetchRepliesForEvent(rootEvent.id, relays);
+  if (!isRouteActive()) return; // Guard before DOM update
   const section: HTMLDivElement = document.createElement("div");
   section.className = "mt-6";
   section.innerHTML = `<h3 class="text-lg font-semibold mb-3">Replies</h3>`;
@@ -236,6 +244,7 @@ async function renderReplyTree(
   }
 
   const renderNode = (event: NostrEvent, depth: number): void => {
+    if (!isRouteActive()) return; // Guard before DOM operations
     const wrapper: HTMLDivElement = document.createElement("div");
     wrapper.className = "mt-4";
     if (depth > 0) {

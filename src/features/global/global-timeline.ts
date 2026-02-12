@@ -42,10 +42,12 @@ export async function loadGlobalTimeline(
       const cached = await getCachedTimeline("global", undefined, { limit: 50 });
       if (cached.hasCache && cached.events.length > 0) {
         console.log(`[GlobalTimeline] Loaded ${cached.events.length} events from cache`);
+        if (!routeIsActive()) return; // Guard before DOM update
         clearedPlaceholder = true;
         output.innerHTML = "";
 
         for (const event of cached.events) {
+          if (!routeIsActive()) return; // Guard before each render
           if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
             continue;
           }
@@ -126,6 +128,7 @@ export async function loadGlobalTimeline(
         // === End buffering ===
 
         if (!clearedPlaceholder) {
+          if (!routeIsActive()) return; // Guard before DOM update
           output.innerHTML = "";
           clearedPlaceholder = true;
         }
@@ -145,6 +148,7 @@ export async function loadGlobalTimeline(
             persistProfile: false,
           })
             .then((fetchedProfile: NostrProfile | null): void => {
+              if (!routeIsActive()) return; // Guard before DOM update
               profileCache.set(event.pubkey, fetchedProfile);
               fetchingProfiles.delete(event.pubkey);
               // Update the rendered event with the fetched profile
@@ -173,6 +177,7 @@ export async function loadGlobalTimeline(
             });
         }
 
+        if (!routeIsActive()) return; // Guard before render
         const npubStr: Npub = nip19.npubEncode(event.pubkey);
         renderEvent(event, profile, npubStr, event.pubkey, output);
         untilTimestamp = Math.min(untilTimestamp, event.created_at);
@@ -227,6 +232,7 @@ export async function loadGlobalTimeline(
     // Only show error if no events exist in the DOM and seenEventIds is still empty
     const hasEvents = output.querySelectorAll(".event-container").length > 0;
     if (!hasEvents && seenEventIds.size === 0) {
+      if (!routeIsActive()) return; // Guard before DOM update
       output.innerHTML = "<p class='text-red-500'>No events found on global timeline.</p>";
     }
 

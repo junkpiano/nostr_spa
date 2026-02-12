@@ -18,7 +18,12 @@ export async function loadEvents(
   seenEventIds: Set<string>,
   output: HTMLElement,
   connectingMsg: HTMLElement | null,
+  isRouteActive?: () => boolean,
 ): Promise<void> {
+  const routeIsActive: () => boolean = isRouteActive || (() => true);
+  if (!routeIsActive()) {
+    return;
+  }
   let anyEventLoaded: boolean = false;
   let clearedPlaceholder: boolean = false;
   const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
@@ -33,10 +38,12 @@ export async function loadEvents(
       const cached = await getCachedTimeline("user", pubkeyHex, { limit: 50 });
       if (cached.hasCache && cached.events.length > 0) {
         console.log(`[ProfileEvents] Loaded ${cached.events.length} events from cache`);
+        if (!routeIsActive()) return; // Guard before DOM update
         clearedPlaceholder = true;
         output.innerHTML = "";
 
         for (const event of cached.events) {
+          if (!routeIsActive()) return; // Guard before each render
           if (seenEventIds.has(event.id)) {
             continue;
           }
@@ -89,6 +96,9 @@ export async function loadEvents(
     };
 
     socket.onmessage = (msg: MessageEvent): void => {
+      if (!routeIsActive()) {
+        return;
+      }
       const arr: any[] = JSON.parse(msg.data);
       if (arr[0] === "EVENT") {
         const event: NostrEvent = arr[2];
@@ -100,6 +110,7 @@ export async function loadEvents(
         // === End buffering ===
 
         if (!clearedPlaceholder) {
+          if (!routeIsActive()) return; // Guard before DOM update
           output.innerHTML = "";
           clearedPlaceholder = true;
         }
@@ -108,6 +119,7 @@ export async function loadEvents(
           connectingMsg.style.display = "none"; // Hide connecting message once events start loading
         }
 
+        if (!routeIsActive()) return; // Guard before render
         const npubStr: Npub = nip19.npubEncode(event.pubkey);
         renderEvent(event, profile, npubStr, event.pubkey, output);
         untilTimestamp = Math.min(untilTimestamp, event.created_at);
@@ -130,6 +142,9 @@ export async function loadEvents(
   }
 
   setTimeout((): void => {
+    if (!routeIsActive()) {
+      return;
+    }
     // === PHASE 2: Store fetched events to cache ===
     if (bufferedEvents.length > 0) {
       storeEvents(bufferedEvents, { isHomeTimeline: false }).catch((error) => {
@@ -155,6 +170,7 @@ export async function loadEvents(
 
     if (!anyEventLoaded && !output.querySelector("div")) {
       if (seenEventIds.size === 0) {
+        if (!routeIsActive()) return; // Guard before DOM update
         output.innerHTML = "<p class='text-red-500'>No events found for this user.</p>";
       }
     }
@@ -176,7 +192,7 @@ export async function loadEvents(
     newLoadMoreBtn.addEventListener(
       "click",
       (): Promise<void> =>
-        loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg),
+        loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, routeIsActive),
     );
   }
 }

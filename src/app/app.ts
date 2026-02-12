@@ -328,6 +328,21 @@ function handleRoute(): void {
         isRouteActive,
       });
     } else if (npub.startsWith("npub")) {
+      // Close any active WebSocket connections from previous timeline
+      closeAllWebSockets();
+
+      // Stop background fetching when switching away from home timeline
+      if (backgroundFetchInterval) {
+        clearInterval(backgroundFetchInterval);
+        backgroundFetchInterval = null;
+      }
+
+      // Remove new posts notification if exists
+      const notification = document.getElementById("new-posts-notification");
+      if (notification) {
+        notification.remove();
+      }
+
       const homeButton: HTMLElement | null = document.getElementById("nav-home");
       const globalButton: HTMLElement | null = document.getElementById("nav-global");
       const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
@@ -378,12 +393,14 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
     // User is logged in, load their home timeline
     const postsHeader: HTMLElement | null = document.getElementById("posts-header");
     if (postsHeader) {
+      if (!isRouteActive()) return; // Guard before DOM update
       postsHeader.textContent = "Home Timeline";
       postsHeader.style.display = "";
     }
 
     // Clear profile section
     if (profileSection) {
+      if (!isRouteActive()) return; // Guard before DOM update
       profileSection.innerHTML = "";
       profileSection.className = "";
     }
@@ -393,6 +410,7 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
       // Use cached follow list, reload timeline
       console.log("Using cached follow list, reloading home timeline");
 
+      if (!isRouteActive()) return; // Guard before DOM update
       renderLoadingState("Loading your timeline...");
       seenEventIds.clear();
       untilTimestamp = Math.floor(Date.now() / 1000);
@@ -507,16 +525,19 @@ async function loadGlobalPage(isRouteActive: () => boolean): Promise<void> {
   }
 
   // Clear output and load global timeline
+  if (!isRouteActive()) return; // Guard before DOM update
   renderLoadingState("Loading global timeline...");
 
   const postsHeader: HTMLElement | null = document.getElementById("posts-header");
   if (postsHeader) {
+    if (!isRouteActive()) return; // Guard before DOM update
     postsHeader.textContent = "Global Timeline";
     postsHeader.style.display = "";
   }
 
   // Clear profile section
   if (profileSection) {
+    if (!isRouteActive()) return; // Guard before DOM update
     profileSection.innerHTML = "";
     profileSection.className = "";
   }
@@ -542,6 +563,7 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
   if (!isRouteActive()) {
     return;
   }
+  if (!isRouteActive()) return; // Guard before DOM update
   renderLoadingState("Loading profile and posts...");
 
   let pubkeyHex: PubkeyHex;
@@ -563,6 +585,7 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
     return;
   }
   if (profileSection) {
+    if (!isRouteActive()) return; // Guard before DOM update
     renderProfile(pubkeyHex, npub, profile, profileSection);
   }
   await setupFollowToggle(pubkeyHex, {
@@ -575,8 +598,13 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
   if (!isRouteActive()) {
     return;
   }
+
+  // Reset timestamp and seen events to fetch latest posts
+  seenEventIds.clear();
+  untilTimestamp = Math.floor(Date.now() / 1000);
+
   if (output) {
-    await loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg);
+    await loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, isRouteActive);
   }
   if (!isRouteActive()) {
     return;
@@ -584,6 +612,8 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
 
   const postsHeader: HTMLElement | null = document.getElementById("posts-header");
   if (postsHeader) {
+    if (!isRouteActive()) return; // Guard before DOM update
+    postsHeader.textContent = "Posts";
     postsHeader.style.display = "";
   }
 }

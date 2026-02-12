@@ -40,6 +40,7 @@ export async function loadHomeTimeline(
 
   if (followedPubkeys.length === 0) {
     if (output) {
+      if (!routeIsActive()) return; // Guard before DOM update
       output.innerHTML = `
                 <div class="text-center py-8">
                     <p class="text-gray-700 mb-4">No authors specified for home timeline.</p>
@@ -59,11 +60,13 @@ export async function loadHomeTimeline(
       const cached = await getCachedTimeline("home", userPubkey, { limit: 50 });
       if (cached.hasCache && cached.events.length > 0) {
         console.log(`[HomeTimeline] Loaded ${cached.events.length} events from cache`);
+        if (!routeIsActive()) return; // Guard before DOM update
         clearedPlaceholder = true;
         output.innerHTML = "";
 
         // Render cached events
         for (const event of cached.events) {
+          if (!routeIsActive()) return; // Guard before each render
           if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
             continue;
           }
@@ -119,11 +122,13 @@ export async function loadHomeTimeline(
     bufferedEvents.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
 
     if (!clearedPlaceholder && bufferedEvents.length > 0) {
+      if (!routeIsActive()) return; // Guard before DOM update
       output.innerHTML = "";
       clearedPlaceholder = true;
     }
 
     bufferedEvents.forEach((event: NostrEvent): void => {
+      if (!routeIsActive()) return; // Guard before each render
       if (renderedEventIds.has(event.id)) {
         return;
       }
@@ -135,6 +140,7 @@ export async function loadHomeTimeline(
         fetchingProfiles.add(event.pubkey);
         fetchProfile(event.pubkey, relays)
           .then((fetchedProfile: NostrProfile | null): void => {
+            if (!routeIsActive()) return; // Guard before DOM update
             profileCache.set(event.pubkey, fetchedProfile);
             fetchingProfiles.delete(event.pubkey);
             // Update the rendered event with the fetched profile
@@ -209,6 +215,7 @@ export async function loadHomeTimeline(
     // === End event storage ===
 
     if (renderedEventIds.size === 0 && seenEventIds.size === 0) {
+      if (!routeIsActive()) return; // Guard before DOM update
       output.innerHTML = "<p class='text-red-500'>No posts found from selected kinds.</p>";
     }
 
