@@ -47,6 +47,8 @@ export async function loadGlobalTimeline(
         output.innerHTML = "";
 
         for (const event of cached.events) {
+          // TODO: Guarding inside loop can cause inconsistent state - renderedEventIds and seenEventIds
+          // may be partially updated when returning early. Consider batch-level guards instead.
           if (!routeIsActive()) return; // Guard before each render
           if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
             continue;
@@ -180,6 +182,7 @@ export async function loadGlobalTimeline(
         if (!routeIsActive()) return; // Guard before render
         const npubStr: Npub = nip19.npubEncode(event.pubkey);
         renderEvent(event, profile, npubStr, event.pubkey, output);
+        // TODO: Possible typo - untilTimestamp appears twice in Math.min. Should be: Math.min(untilTimestamp, event.created_at)
         untilTimestamp = Math.min(untilTimestamp, event.created_at);
       } else if (arr[0] === "EOSE") {
         socket.close();

@@ -329,6 +329,8 @@ function handleRoute(): void {
       });
     } else if (npub.startsWith("npub")) {
       // Close any active WebSocket connections from previous timeline
+      // TODO: Race condition - closeAllWebSockets() may close sockets created for the new page
+      // if navigation happens quickly. Consider adding route scoping or socket ownership tracking.
       closeAllWebSockets();
 
       // Stop background fetching when switching away from home timeline
@@ -563,6 +565,8 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
   if (!isRouteActive()) {
     return;
   }
+  // TODO: Redundant isRouteActive check - second check immediately after first is unnecessary
+  // and can cause confusion. Consider consolidating guards at key boundaries only.
   if (!isRouteActive()) return; // Guard before DOM update
   renderLoadingState("Loading profile and posts...");
 

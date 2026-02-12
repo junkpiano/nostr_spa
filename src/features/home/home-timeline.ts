@@ -66,6 +66,8 @@ export async function loadHomeTimeline(
 
         // Render cached events
         for (const event of cached.events) {
+          // TODO: Guarding inside loop can leave inconsistent state - renderedEventIds and seenEventIds
+          // may be partially updated. Consider checking route before loop or batching state updates.
           if (!routeIsActive()) return; // Guard before each render
           if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
             continue;

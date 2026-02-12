@@ -20,6 +20,8 @@ export async function loadEvents(
   connectingMsg: HTMLElement | null,
   isRouteActive?: () => boolean,
 ): Promise<void> {
+  // TODO: Optional isRouteActive parameter means only some call sites get race protection.
+  // Consider making it required or using a wrapper to enforce consistent behavior.
   const routeIsActive: () => boolean = isRouteActive || (() => true);
   if (!routeIsActive()) {
     return;
@@ -43,6 +45,9 @@ export async function loadEvents(
         output.innerHTML = "";
 
         for (const event of cached.events) {
+          // TODO: Guarding inside loop can leave inconsistent state - seenEventIds may be
+          // partially updated when returning early. Consider checking route before loop or
+          // deferring state mutations until after all guards pass.
           if (!routeIsActive()) return; // Guard before each render
           if (seenEventIds.has(event.id)) {
             continue;
@@ -142,6 +147,8 @@ export async function loadEvents(
   }
 
   setTimeout((): void => {
+    // TODO: setTimeout captures bufferedEvents at invocation time. If route changes and returns
+    // quickly, we may skip caching altogether, losing fetched events. Consider if this is acceptable.
     if (!routeIsActive()) {
       return;
     }
