@@ -4,7 +4,14 @@ import { fetchProfile } from "../profile/profile.js";
 import { renderEvent } from "../../common/event-render.js";
 import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
 import { createRelayWebSocket } from "../../common/relay-socket.js";
-import type { NostrProfile, Npub, NostrEvent } from "../../../types/nostr";
+import type { NostrProfile, Npub, NostrEvent, PubkeyHex } from "../../../types/nostr";
+import {
+  getCachedTimeline,
+  storeEvents,
+  prependEventsToTimeline,
+  appendEventsToTimeline,
+  getProfile as getCachedProfile
+} from "../../common/db/index.js";
 
 export async function loadGlobalTimeline(
   relays: string[],
@@ -23,8 +30,52 @@ export async function loadGlobalTimeline(
   }
   const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
   let clearedPlaceholder: boolean = false;
+  const bufferedEvents: NostrEvent[] = [];
+  const renderedEventIds: Set<string> = new Set();
 
-  if (connectingMsg) {
+  // === PHASE 2: Cache-first loading ===
+  const isInitialLoad = untilTimestamp >= Date.now() - 60000;
+  if (isInitialLoad) {
+    try {
+      const cached = await getCachedTimeline("global", undefined, { limit: 50 });
+      if (cached.hasCache && cached.events.length > 0) {
+        console.log(`[GlobalTimeline] Loaded ${cached.events.length} events from cache`);
+        clearedPlaceholder = true;
+        output.innerHTML = "";
+
+        for (const event of cached.events) {
+          if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
+            continue;
+          }
+          renderedEventIds.add(event.id);
+          seenEventIds.add(event.id);
+
+          let profile: NostrProfile | null = null;
+          if (profileCache.has(event.pubkey)) {
+            profile = profileCache.get(event.pubkey) || null;
+          } else {
+            profile = await getCachedProfile(event.pubkey as PubkeyHex);
+            if (profile) {
+              profileCache.set(event.pubkey, profile);
+            }
+          }
+
+          const npubStr: Npub = nip19.npubEncode(event.pubkey);
+          renderEvent(event, profile, npubStr, event.pubkey, output);
+          untilTimestamp = Math.min(untilTimestamp, event.created_at);
+        }
+
+        if (connectingMsg) {
+          connectingMsg.style.display = "none";
+        }
+      }
+    } catch (error) {
+      console.error("[GlobalTimeline] Failed to load from cache:", error);
+    }
+  }
+  // === End cache-first loading ===
+
+  if (connectingMsg && !clearedPlaceholder) {
     connectingMsg.style.display = ""; // Show connecting message
   }
 
@@ -64,6 +115,10 @@ export async function loadGlobalTimeline(
         const event: NostrEvent = arr[2];
         if (seenEventIds.has(event.id)) return;
         seenEventIds.add(event.id);
+
+        // === PHASE 2: Buffer events for batch storage ===
+        bufferedEvents.push(event);
+        // === End buffering ===
 
         if (!clearedPlaceholder) {
           output.innerHTML = "";
@@ -140,6 +195,30 @@ export async function loadGlobalTimeline(
     if (!routeIsActive()) {
       return;
     }
+
+    // === PHASE 2: Store fetched events to cache ===
+    if (bufferedEvents.length > 0) {
+      storeEvents(bufferedEvents, { isHomeTimeline: false }).catch((error) => {
+        console.error("[GlobalTimeline] Failed to store events:", error);
+      });
+
+      const eventIds = bufferedEvents.map((e) => e.id);
+      const timestamps = bufferedEvents.map((e) => e.created_at);
+      const newestTimestamp = Math.max(...timestamps);
+      const oldestTimestamp = Math.min(...timestamps);
+
+      if (isInitialLoad) {
+        prependEventsToTimeline("global", undefined, eventIds, newestTimestamp).catch((error) => {
+          console.error("[GlobalTimeline] Failed to update timeline:", error);
+        });
+      } else {
+        appendEventsToTimeline("global", undefined, eventIds, oldestTimestamp).catch((error) => {
+          console.error("[GlobalTimeline] Failed to append to timeline:", error);
+        });
+      }
+    }
+    // === End event storage ===
+
     // Only show error if no events exist in the DOM and seenEventIds is still empty
     const hasEvents = output.querySelectorAll(".event-container").length > 0;
     if (!hasEvents && seenEventIds.size === 0) {
@@ -158,7 +237,7 @@ export async function loadGlobalTimeline(
         loadMoreBtn.style.display = "inline";
       }
     }
-  }, 5000); // Increased to 5 seconds to give more time for events to load
+  }, 8000); // Safety timeout to ensure loading completes even if relays don't respond
   activeTimeouts.push(timeoutId);
 
   if (loadMoreBtn) {

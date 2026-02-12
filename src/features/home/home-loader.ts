@@ -79,6 +79,7 @@ export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions)
         options.activeWebSockets,
         options.activeTimeouts,
         isRouteActive,
+        options.pubkeyHex, // Pass user's pubkey for cache key
       );
 
       if (!isRouteActive()) {

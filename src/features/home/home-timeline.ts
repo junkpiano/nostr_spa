@@ -5,6 +5,13 @@ import { renderEvent } from "../../common/event-render.js";
 import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
 import { createRelayWebSocket } from "../../common/relay-socket.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
+import {
+  getCachedTimeline,
+  storeEvents,
+  prependEventsToTimeline,
+  appendEventsToTimeline,
+  getProfile as getCachedProfile
+} from "../../common/db/index.js";
 
 export async function loadHomeTimeline(
   followedPubkeys: PubkeyHex[],
@@ -18,6 +25,7 @@ export async function loadHomeTimeline(
   activeWebSockets: WebSocket[] = [],
   activeTimeouts: number[] = [],
   isRouteActive?: () => boolean,
+  userPubkey?: PubkeyHex | undefined,
 ): Promise<void> {
   const routeIsActive: () => boolean = isRouteActive || (() => true);
   if (!routeIsActive()) {
@@ -40,6 +48,53 @@ export async function loadHomeTimeline(
     }
     return;
   }
+
+  // === PHASE 2: Cache-first loading ===
+  // Load cached timeline immediately if this is the initial load (untilTimestamp is current time)
+  const isInitialLoad = untilTimestamp >= Date.now() - 60000; // Within last minute = initial load
+  if (isInitialLoad && userPubkey) {
+    try {
+      const cached = await getCachedTimeline("home", userPubkey, { limit: 50 });
+      if (cached.hasCache && cached.events.length > 0) {
+        console.log(`[HomeTimeline] Loaded ${cached.events.length} events from cache`);
+        clearedPlaceholder = true;
+        output.innerHTML = "";
+
+        // Render cached events
+        for (const event of cached.events) {
+          if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
+            continue;
+          }
+          renderedEventIds.add(event.id);
+          seenEventIds.add(event.id);
+
+          // Try to get profile from IndexedDB cache
+          let profile: NostrProfile | null = null;
+          if (profileCache.has(event.pubkey)) {
+            profile = profileCache.get(event.pubkey) || null;
+          } else {
+            profile = await getCachedProfile(event.pubkey as PubkeyHex);
+            if (profile) {
+              profileCache.set(event.pubkey, profile);
+            }
+          }
+
+          const npubStr: Npub = nip19.npubEncode(event.pubkey);
+          renderEvent(event, profile, npubStr, event.pubkey, output);
+          untilTimestamp = Math.min(untilTimestamp, event.created_at);
+        }
+
+        // Hide connecting message since we have cached content
+        if (connectingMsg) {
+          connectingMsg.style.display = "none";
+        }
+      }
+    } catch (error) {
+      console.error("[HomeTimeline] Failed to load from cache:", error);
+      // Continue with relay fetch
+    }
+  }
+  // === End cache-first loading ===
 
   const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
 
@@ -122,6 +177,32 @@ export async function loadHomeTimeline(
     finalized = true;
     flushBufferedEvents();
 
+    // === PHASE 2: Store fetched events to cache ===
+    if (bufferedEvents.length > 0 && userPubkey) {
+      storeEvents(bufferedEvents, { isHomeTimeline: true }).catch((error) => {
+        console.error("[HomeTimeline] Failed to store events:", error);
+      });
+
+      // Update timeline index
+      const eventIds = bufferedEvents.map((e) => e.id);
+      const timestamps = bufferedEvents.map((e) => e.created_at);
+      const newestTimestamp = Math.max(...timestamps);
+      const oldestTimestamp = Math.min(...timestamps);
+
+      if (isInitialLoad) {
+        // Initial load: prepend new events
+        prependEventsToTimeline("home", userPubkey, eventIds, newestTimestamp).catch((error) => {
+          console.error("[HomeTimeline] Failed to update timeline:", error);
+        });
+      } else {
+        // Pagination: append older events
+        appendEventsToTimeline("home", userPubkey, eventIds, oldestTimestamp).catch((error) => {
+          console.error("[HomeTimeline] Failed to append to timeline:", error);
+        });
+      }
+    }
+    // === End event storage ===
+
     if (renderedEventIds.size === 0 && seenEventIds.size === 0) {
       output.innerHTML = "<p class='text-red-500'>No posts found from selected kinds.</p>";
     }
@@ -148,6 +229,15 @@ export async function loadHomeTimeline(
     }, 300);
     activeTimeouts.push(timeoutId);
   };
+
+  // Safety timeout to ensure loading completes even if relays don't respond
+  const safetyTimeoutId = window.setTimeout((): void => {
+    if (!finalized) {
+      console.warn("Timeline loading timed out, forcing finalization");
+      finalizeLoading();
+    }
+  }, 8000);
+  activeTimeouts.push(safetyTimeoutId);
 
   for (const relayUrl of relays) {
     const socket: WebSocket = createRelayWebSocket(relayUrl);
@@ -237,6 +327,7 @@ export async function loadHomeTimeline(
         activeWebSockets,
         activeTimeouts,
         routeIsActive,
+        userPubkey,
       ),
     );
   }

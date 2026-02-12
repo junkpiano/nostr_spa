@@ -1,0 +1,382 @@
+// Service Worker for Nostr App Background Sync
+// This runs independently from the main app and can perform background tasks
+
+const SW_VERSION = 'v1.0.0';
+const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_NAME = 'nostr-app-v1';
+
+console.log('[ServiceWorker] Initializing', SW_VERSION);
+
+// Installation
+self.addEventListener('install', (event) => {
+  console.log('[ServiceWorker] Installing');
+  // Skip waiting to activate immediately
+  self.skipWaiting();
+});
+
+// Activation
+self.addEventListener('activate', (event) => {
+  console.log('[ServiceWorker] Activating');
+  // Claim all clients immediately
+  event.waitUntil(self.clients.claim());
+});
+
+// Message handling from main thread
+self.addEventListener('message', (event) => {
+  console.log('[ServiceWorker] Received message:', event.data);
+
+  if (event.data.type === 'SYNC_TIMELINE') {
+    handleTimelineSync(event.data.payload, event.source);
+  } else if (event.data.type === 'START_PERIODIC_SYNC') {
+    startPeriodicSync(event.data.payload);
+  } else if (event.data.type === 'STOP_PERIODIC_SYNC') {
+    stopPeriodicSync();
+  } else if (event.data.type === 'PING') {
+    event.source.postMessage({ type: 'PONG', version: SW_VERSION });
+  }
+});
+
+// Periodic sync state
+let syncIntervalId = null;
+let syncConfig = null;
+
+function startPeriodicSync(config) {
+  console.log('[ServiceWorker] Starting periodic sync', config);
+
+  syncConfig = config;
+
+  // Clear any existing interval
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+  }
+
+  // Start periodic sync
+  syncIntervalId = setInterval(() => {
+    performBackgroundSync();
+  }, SYNC_INTERVAL_MS);
+
+  // Perform initial sync immediately
+  performBackgroundSync();
+}
+
+function stopPeriodicSync() {
+  console.log('[ServiceWorker] Stopping periodic sync');
+
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId);
+    syncIntervalId = null;
+  }
+
+  syncConfig = null;
+}
+
+async function performBackgroundSync() {
+  if (!syncConfig) {
+    console.log('[ServiceWorker] No sync config, skipping');
+    return;
+  }
+
+  console.log('[ServiceWorker] Performing background sync');
+
+  try {
+    // Sync home timeline if user is logged in
+    if (syncConfig.userPubkey && syncConfig.followedPubkeys) {
+      const result = await syncTimelineViaFetch(
+        'home',
+        syncConfig.userPubkey,
+        syncConfig.followedPubkeys
+      );
+
+      if (result.success && result.newEventCount > 0) {
+        // Notify all clients about new events
+        notifyClients({
+          type: 'NEW_EVENTS',
+          timelineType: 'home',
+          count: result.newEventCount,
+        });
+      }
+    }
+
+    // Sync global timeline if enabled
+    if (syncConfig.syncGlobal) {
+      const result = await syncTimelineViaFetch('global');
+
+      if (result.success && result.newEventCount > 0) {
+        notifyClients({
+          type: 'NEW_EVENTS',
+          timelineType: 'global',
+          count: result.newEventCount,
+        });
+      }
+    }
+  } catch (error) {
+    console.error('[ServiceWorker] Background sync failed:', error);
+  }
+}
+
+async function handleTimelineSync(payload, source) {
+  console.log('[ServiceWorker] Handling timeline sync request');
+
+  try {
+    const result = await syncTimelineViaFetch(
+      payload.timelineType,
+      payload.userPubkey,
+      payload.followedPubkeys
+    );
+
+    source.postMessage({
+      type: 'SYNC_RESULT',
+      payload: result,
+    });
+  } catch (error) {
+    console.error('[ServiceWorker] Sync failed:', error);
+    source.postMessage({
+      type: 'SYNC_RESULT',
+      payload: {
+        success: false,
+        newEventCount: 0,
+        error: error.message,
+      },
+    });
+  }
+}
+
+// Notify all clients
+async function notifyClients(message) {
+  const clients = await self.clients.matchAll({ type: 'window' });
+  clients.forEach((client) => {
+    client.postMessage(message);
+  });
+}
+
+/**
+ * Syncs a timeline using IndexedDB and WebSocket
+ * This is a simplified version that runs in the service worker context
+ */
+async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
+  try {
+    // Open IndexedDB
+    const db = await openDB();
+
+    // Get newest timestamp from timeline
+    const newestTimestamp = await getTimelineNewestTimestamp(db, timelineType, userPubkey);
+
+    if (!newestTimestamp) {
+      console.log('[ServiceWorker] No cached timeline, skipping sync');
+      return { success: true, newEventCount: 0 };
+    }
+
+    // Fetch new events from relays
+    const relays = await getRelays(db);
+    const newEvents = await fetchNewEventsFromRelays(
+      relays,
+      newestTimestamp,
+      timelineType,
+      followedPubkeys
+    );
+
+    if (newEvents.length === 0) {
+      return { success: true, newEventCount: 0 };
+    }
+
+    // Store events in IndexedDB
+    await storeEventsInDB(db, newEvents);
+
+    // Update timeline index
+    await updateTimelineIndex(db, timelineType, userPubkey, newEvents);
+
+    console.log(`[ServiceWorker] Synced ${newEvents.length} new events`);
+
+    return {
+      success: true,
+      newEventCount: newEvents.length,
+    };
+  } catch (error) {
+    console.error('[ServiceWorker] Sync error:', error);
+    return {
+      success: false,
+      newEventCount: 0,
+      error: error.message,
+    };
+  }
+}
+
+// IndexedDB helpers for service worker context
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('nostr-app-db', 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getTimelineNewestTimestamp(db, type, pubkey) {
+  const key = `${type}:${pubkey || ''}`;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('timelines', 'readonly');
+    const store = tx.objectStore('timelines');
+    const request = store.get(key);
+
+    request.onsuccess = () => {
+      const timeline = request.result;
+      resolve(timeline?.newestTimestamp || 0);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getRelays(db) {
+  // Try to get relays from localStorage or use defaults
+  try {
+    const relaysJson = self.localStorage?.getItem('nostr_relays');
+    if (relaysJson) {
+      return JSON.parse(relaysJson);
+    }
+  } catch (e) {
+    console.warn('[ServiceWorker] Could not access localStorage:', e);
+  }
+
+  // Default relays
+  return [
+    'wss://relay.snort.social',
+    'wss://relay.damus.io',
+    'wss://nos.lol',
+    'wss://yabu.me',
+  ];
+}
+
+async function fetchNewEventsFromRelays(relays, sinceTimestamp, timelineType, followedPubkeys) {
+  const events = [];
+  const seenIds = new Set();
+
+  const filter = {
+    kinds: [1],
+    limit: 50,
+    since: sinceTimestamp,
+  };
+
+  if (timelineType === 'home' && followedPubkeys && followedPubkeys.length > 0) {
+    filter.authors = followedPubkeys;
+  }
+
+  const promises = relays.map(async (relayUrl) => {
+    try {
+      const socket = new WebSocket(relayUrl);
+
+      await new Promise((resolve) => {
+        let timeout = setTimeout(() => {
+          socket.close();
+          resolve();
+        }, 8000);
+
+        socket.onopen = () => {
+          const subId = 'sw-sync-' + Math.random().toString(36).slice(2);
+          socket.send(JSON.stringify(['REQ', subId, filter]));
+        };
+
+        socket.onmessage = (msg) => {
+          try {
+            const arr = JSON.parse(msg.data);
+            if (arr[0] === 'EVENT' && arr[2]?.kind === 1) {
+              const event = arr[2];
+              if (!seenIds.has(event.id)) {
+                seenIds.add(event.id);
+                events.push(event);
+              }
+            } else if (arr[0] === 'EOSE') {
+              clearTimeout(timeout);
+              socket.close();
+              resolve();
+            }
+          } catch (e) {
+            console.warn('[ServiceWorker] Parse error:', e);
+          }
+        };
+
+        socket.onerror = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+
+        socket.onclose = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+      });
+    } catch (e) {
+      console.warn('[ServiceWorker] Relay error:', e);
+    }
+  });
+
+  await Promise.allSettled(promises);
+
+  // Sort by timestamp (newest first)
+  events.sort((a, b) => b.created_at - a.created_at);
+
+  return events;
+}
+
+async function storeEventsInDB(db, events) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('events', 'readwrite');
+    const store = tx.objectStore('events');
+
+    for (const event of events) {
+      store.put({
+        id: event.id,
+        event: event,
+        cachedAt: Date.now(),
+        isHomeTimeline: false,
+      });
+    }
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function updateTimelineIndex(db, type, pubkey, events) {
+  const key = `${type}:${pubkey || ''}`;
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('timelines', 'readwrite');
+    const store = tx.objectStore('timelines');
+
+    const request = store.get(key);
+
+    request.onsuccess = () => {
+      const timeline = request.result;
+
+      if (timeline) {
+        const eventIds = events.map(e => e.id);
+        const existingSet = new Set(timeline.eventIds);
+        const newEventIds = eventIds.filter(id => !existingSet.has(id));
+
+        timeline.eventIds = [...newEventIds, ...timeline.eventIds];
+        timeline.newestTimestamp = Math.max(
+          timeline.newestTimestamp,
+          ...events.map(e => e.created_at)
+        );
+        timeline.updatedAt = Date.now();
+
+        store.put(timeline);
+      }
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Periodic Background Sync API (if supported)
+if ('periodicSync' in self.registration) {
+  self.addEventListener('periodicsync', (event) => {
+    console.log('[ServiceWorker] Periodic sync event:', event.tag);
+
+    if (event.tag === 'timeline-sync') {
+      event.waitUntil(performBackgroundSync());
+    }
+  });
+}
+
+console.log('[ServiceWorker] Loaded', SW_VERSION);

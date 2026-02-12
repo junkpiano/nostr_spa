@@ -4,6 +4,26 @@ import { recordRelayFailure } from "../relays/relays.js";
 import { getCachedProfile, setCachedProfile } from "./profile-cache.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../../../types/nostr";
 
+/**
+ * Converts URLs in text to clickable links
+ */
+function convertUrlsToLinks(text: string): string {
+    return text.replace(
+        /(https?:\/\/[^\s]+)/g,
+        (url: string): string => {
+            // Escape HTML in the URL for display
+            const displayUrl = url
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+
+            return `<a href="${displayUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-700 underline font-medium">${displayUrl}</a>`;
+        }
+    );
+}
+
 interface FetchProfileOptions {
     usePersistentCache?: boolean;
     persistProfile?: boolean;
@@ -135,21 +155,40 @@ export function renderProfile(pubkey: PubkeyHex, npub: Npub, profile: NostrProfi
     const avatar: string = getAvatarURL(pubkey, profile);
     const name: string = getDisplayName(npub, profile);
     const banner: string | undefined = profile?.banner;
+    const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
 
-    profileSection.innerHTML = `
-    <div class="relative overflow-hidden rounded-lg">
-      ${banner ? `
+    // Convert URLs to links in bio
+    const bioHtml: string = profile?.about
+        ? convertUrlsToLinks(
+            profile.about
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+        )
+        : '';
+
+    // Avatar HTML based on energy saving mode
+    const avatarHtml: string = isEnergySavingMode
+        ? `<div class="w-20 h-20 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-3xl mb-2 border-4 ${banner ? 'border-white shadow-lg' : 'border-gray-200'}">👤</div>`
+        : `<img src="${avatar}" alt="Avatar" class="w-20 h-20 rounded-full object-cover mb-2 border-4 ${banner ? 'border-white shadow-lg' : 'border-gray-200'}"
+            onerror="this.src='https://placekitten.com/100/100';" />`;
+
+    // Banner HTML based on energy saving mode
+    const bannerHtml: string = (banner && !isEnergySavingMode) ? `
         <div class="absolute inset-0 w-full h-full">
           <img src="${banner}" alt="Profile Banner" class="w-full h-full object-cover"
             onerror="this.style.display='none';" />
           <div class="absolute inset-0 bg-gradient-to-b from-black/30 via-black/50 to-black/70"></div>
         </div>
-      ` : ''}
-      <div class="relative flex flex-col items-center ${banner ? 'py-12 px-4' : 'py-6'}">
-        <img src="${avatar}" alt="Avatar" class="w-20 h-20 rounded-full object-cover mb-2 border-4 ${banner ? 'border-white shadow-lg' : 'border-gray-200'}"
-          onerror="this.src='https://placekitten.com/100/100';" />
-        <h2 class="font-bold text-lg ${banner ? 'text-white drop-shadow-lg' : 'text-gray-900'}">${name}</h2>
-        ${profile?.about ? `<p class="${banner ? 'text-white/90 drop-shadow' : 'text-gray-600'} text-sm mt-1 text-center max-w-2xl">${profile.about}</p>` : ""}
+      ` : '';
+
+    profileSection.innerHTML = `
+    <div class="relative overflow-hidden rounded-lg">
+      ${bannerHtml}
+      <div class="relative flex flex-col items-center ${banner && !isEnergySavingMode ? 'py-12 px-4' : 'py-6'}">
+        ${avatarHtml}
+        <h2 class="font-bold text-lg ${banner && !isEnergySavingMode ? 'text-white drop-shadow-lg' : 'text-gray-900'}">${name}</h2>
+        ${bioHtml ? `<p class="${banner && !isEnergySavingMode ? 'text-white/90 drop-shadow' : 'text-gray-600'} text-sm mt-1 text-center max-w-2xl break-words px-4 w-full whitespace-pre-wrap">${bioHtml}</p>` : ""}
         <div id="follow-action" class="mt-4"></div>
       </div>
     </div>

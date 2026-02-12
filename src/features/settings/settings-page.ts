@@ -50,8 +50,25 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
   }
 
   if (options.output) {
+    const isEnergySavingEnabled = localStorage.getItem("energy_saving_mode") === "true";
+
     options.output.innerHTML = `
-      <div class="space-y-5 text-sm">
+      <div class="space-y-6 text-sm">
+        <!-- Energy Saving Mode Section -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="font-semibold text-gray-900 mb-1">⚡ Energy Saving Mode</h3>
+              <p class="text-xs text-gray-600">Images and videos will show as links instead of loading inline</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="energy-saving-toggle" class="sr-only peer" ${isEnergySavingEnabled ? "checked" : ""}>
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Cache Section -->
         <div class="text-gray-600">
           この端末に保存しているデータです。
         </div>
@@ -72,11 +89,37 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
     `;
   }
 
+  const energySavingToggle: HTMLInputElement | null = document.getElementById("energy-saving-toggle") as HTMLInputElement | null;
   const sizeEl: HTMLElement | null = document.getElementById("cache-size");
   const eventsEl: HTMLElement | null = document.getElementById("cache-events");
   const profilesEl: HTMLElement | null = document.getElementById("cache-profiles");
   const statusEl: HTMLElement | null = document.getElementById("cache-status");
   const clearBtn: HTMLButtonElement | null = document.getElementById("cache-clear") as HTMLButtonElement | null;
+
+  // Energy saving mode toggle
+  if (energySavingToggle) {
+    energySavingToggle.addEventListener("change", (): void => {
+      const isEnabled = energySavingToggle.checked;
+      localStorage.setItem("energy_saving_mode", isEnabled ? "true" : "false");
+
+      // Dispatch event to notify the app
+      window.dispatchEvent(new CustomEvent("energy-saving-changed", {
+        detail: { enabled: isEnabled }
+      }));
+
+      // Show feedback
+      if (statusEl) {
+        statusEl.textContent = isEnabled
+          ? "⚡ Energy saving mode enabled"
+          : "Energy saving mode disabled";
+        setTimeout((): void => {
+          if (statusEl) {
+            statusEl.textContent = "";
+          }
+        }, 3000);
+      }
+    });
+  }
 
   const updateStats = async (): Promise<void> => {
     const [eventStats, profileStats] = await Promise.all([getEventCacheStats(), getProfileCacheStats()]);

@@ -2,6 +2,12 @@ import { nip19 } from 'nostr-tools';
 import { renderEvent } from "../../common/event-render.js";
 import { createRelayWebSocket } from "../../common/relay-socket.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
+import {
+  getCachedTimeline,
+  storeEvents,
+  prependEventsToTimeline,
+  appendEventsToTimeline
+} from "../../common/db/index.js";
 
 export async function loadEvents(
   pubkeyHex: PubkeyHex,
@@ -16,8 +22,41 @@ export async function loadEvents(
   let anyEventLoaded: boolean = false;
   let clearedPlaceholder: boolean = false;
   const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
+  const bufferedEvents: NostrEvent[] = [];
 
-  if (connectingMsg) {
+  // === PHASE 2: Cache-first loading ===
+  const isInitialLoad = untilTimestamp >= Date.now() - 60000;
+  if (isInitialLoad) {
+    try {
+      const cached = await getCachedTimeline("user", pubkeyHex, { limit: 50 });
+      if (cached.hasCache && cached.events.length > 0) {
+        console.log(`[ProfileEvents] Loaded ${cached.events.length} events from cache`);
+        clearedPlaceholder = true;
+        output.innerHTML = "";
+
+        for (const event of cached.events) {
+          if (seenEventIds.has(event.id)) {
+            continue;
+          }
+          seenEventIds.add(event.id);
+
+          const npubStr: Npub = nip19.npubEncode(event.pubkey);
+          renderEvent(event, profile, npubStr, event.pubkey, output);
+          untilTimestamp = Math.min(untilTimestamp, event.created_at);
+          anyEventLoaded = true;
+        }
+
+        if (connectingMsg) {
+          connectingMsg.style.display = "none";
+        }
+      }
+    } catch (error) {
+      console.error("[ProfileEvents] Failed to load from cache:", error);
+    }
+  }
+  // === End cache-first loading ===
+
+  if (connectingMsg && !clearedPlaceholder) {
     connectingMsg.style.display = ""; // Show connecting message
   }
 
@@ -51,6 +90,10 @@ export async function loadEvents(
         if (seenEventIds.has(event.id)) return;
         seenEventIds.add(event.id);
 
+        // === PHASE 2: Buffer events for batch storage ===
+        bufferedEvents.push(event);
+        // === End buffering ===
+
         if (!clearedPlaceholder) {
           output.innerHTML = "";
           clearedPlaceholder = true;
@@ -82,6 +125,29 @@ export async function loadEvents(
   }
 
   setTimeout((): void => {
+    // === PHASE 2: Store fetched events to cache ===
+    if (bufferedEvents.length > 0) {
+      storeEvents(bufferedEvents, { isHomeTimeline: false }).catch((error) => {
+        console.error("[ProfileEvents] Failed to store events:", error);
+      });
+
+      const eventIds = bufferedEvents.map((e) => e.id);
+      const timestamps = bufferedEvents.map((e) => e.created_at);
+      const newestTimestamp = Math.max(...timestamps);
+      const oldestTimestamp = Math.min(...timestamps);
+
+      if (isInitialLoad) {
+        prependEventsToTimeline("user", pubkeyHex, eventIds, newestTimestamp).catch((error) => {
+          console.error("[ProfileEvents] Failed to update timeline:", error);
+        });
+      } else {
+        appendEventsToTimeline("user", pubkeyHex, eventIds, oldestTimestamp).catch((error) => {
+          console.error("[ProfileEvents] Failed to append to timeline:", error);
+        });
+      }
+    }
+    // === End event storage ===
+
     if (!anyEventLoaded && !output.querySelector("div")) {
       if (seenEventIds.size === 0) {
         output.innerHTML = "<p class='text-red-500'>No events found for this user.</p>";

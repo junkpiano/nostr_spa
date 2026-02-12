@@ -20,11 +20,16 @@
     <h1 class="text-2xl sm:text-4xl font-bold">noxtr</h1>
   </header>
 
+  <!-- Mobile menu button -->
+  <button id="mobile-menu-button" class="lg:hidden fixed bottom-20 left-4 z-40 h-14 w-14 rounded-full bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 text-white shadow-xl transition-all hover:scale-105 hover:shadow-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+    <span class="text-2xl leading-none">☰</span>
+  </button>
+
   <main class="w-full max-w-7xl mx-auto mt-6 sm:mt-10 px-4 sm:px-6 lg:px-8">
     <div class="flex flex-col lg:flex-row gap-6">
       <!-- Left sidebar navigation -->
-      <aside class="lg:w-48 w-full">
-        <div class="bg-white p-4 rounded-lg shadow-md sticky top-6 space-y-2">
+      <aside id="sidebar" class="lg:w-48 w-full hidden lg:block">
+        <div class="bg-white p-4 rounded-lg shadow-md lg:sticky lg:top-6 space-y-2">
           <button id="nav-home" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-gray-700 flex items-center gap-2">
             <span>🏠</span>
             <span>Home</span>
@@ -48,6 +53,10 @@
           <button id="nav-settings" class="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-gray-700 flex items-center gap-2">
             <span>⚙️</span>
             <span>Settings</span>
+          </button>
+          <button id="nav-search-mobile" class="lg:hidden w-full text-left px-4 py-3 rounded-lg hover:bg-gray-100 transition-colors font-semibold text-gray-700 flex items-center gap-2 border-t border-gray-200 mt-2 pt-4">
+            <span>🔍</span>
+            <span>Search Posts</span>
           </button>
           <button id="nav-logout" style="display: none;" class="w-full text-left px-4 py-3 rounded-lg hover:bg-red-100 transition-colors font-semibold text-red-600 flex items-center gap-2 border-t border-gray-200 mt-2 pt-4">
             <span>🚪</span>
@@ -78,7 +87,7 @@
       </div>
 
       <!-- Right sidebar column -->
-      <aside class="lg:w-80 w-full">
+      <aside class="lg:w-80 w-full hidden lg:block">
         <div class="bg-white p-4 sm:p-6 rounded-lg shadow-md sticky top-6">
           <!-- Search Section -->
           <div>
@@ -133,6 +142,29 @@
       </div>
     </div>
   </div>
+  <div id="reply-overlay" style="display: none;" class="fixed inset-0 z-50">
+    <div id="reply-overlay-backdrop" class="absolute inset-0 bg-black/60"></div>
+    <div class="relative h-full w-full flex items-center justify-center px-4">
+      <div class="bg-white w-full max-w-2xl rounded-xl shadow-2xl p-5 max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold text-gray-900">Reply to Post</h3>
+          <button id="reply-overlay-close" class="text-gray-500 hover:text-gray-800 text-xl font-bold">✕</button>
+        </div>
+        <div id="reply-original-post" class="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+          <!-- Original post will be inserted here -->
+        </div>
+        <textarea id="reply-textarea" rows="6" placeholder="Write your reply..."
+          class="w-full border border-gray-300 rounded-lg p-3 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <div class="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-end">
+          <span id="reply-status" class="text-xs text-gray-500"></span>
+          <button id="reply-submit"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow">
+            Reply
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="image-overlay" style="display: none;" class="fixed inset-0 z-50">
     <div id="image-overlay-backdrop" class="absolute inset-0 bg-black/80"></div>
     <div class="relative h-full w-full flex items-center justify-center px-4">
@@ -143,6 +175,33 @@
         <div id="image-overlay-count" class="mt-4 text-sm text-gray-200"></div>
       </div>
       <button id="image-overlay-next" class="absolute right-4 sm:right-8 text-white text-3xl font-bold">›</button>
+    </div>
+  </div>
+  <div id="search-overlay" style="display: none;" class="lg:hidden fixed inset-0 z-50">
+    <div id="search-overlay-backdrop" class="absolute inset-0 bg-black/60"></div>
+    <div class="relative h-full w-full flex items-start justify-center px-4 pt-20">
+      <div class="bg-white w-full max-w-md rounded-xl shadow-2xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-xl font-semibold text-gray-900">Search Posts</h3>
+          <button id="search-overlay-close" class="text-gray-500 hover:text-gray-800 text-xl font-bold">✕</button>
+        </div>
+        <div class="space-y-3">
+          <input id="search-input-mobile" type="text" placeholder="Search for words in posts..."
+            class="border border-gray-300 rounded-lg px-4 py-2 w-full text-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          <button id="search-button-mobile"
+            class="bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow-lg">
+            Search
+          </button>
+          <button id="clear-search-button-mobile"
+            class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-4 rounded-lg w-full transition-colors shadow"
+            style="display: none;">
+            Clear Search
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 mt-3">
+          Search through post content for specific words or phrases.
+        </p>
+      </div>
     </div>
   </div>
 </body>

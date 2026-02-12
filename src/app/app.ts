@@ -4,6 +4,7 @@ import { loadGlobalTimeline } from "../features/global/global-timeline.js";
 import { loadHomeTimeline } from "../features/home/home-timeline.js";
 import { loadEvents } from "../features/profile/profile-events.js";
 import { setupComposeOverlay } from "../common/compose.js";
+import { setupReplyOverlay } from "../common/reply.js";
 import { setupImageOverlay } from "../common/overlays.js";
 import { getAllRelays, getRelays, setRelays, recordRelayFailure, normalizeRelayUrl } from "../features/relays/relays.js";
 import { loadRelaysPage } from "../features/relays/relays-page.js";
@@ -17,6 +18,7 @@ import { showInputForm } from "../features/home/welcome.js";
 import { loadEventPage } from "../features/event/event-page.js";
 import { loadUserHomeTimeline } from "../features/home/home-loader.js";
 import { createRelayWebSocket } from "../common/relay-socket.js";
+import { registerServiceWorker, startPeriodicSync } from "../common/sync/service-worker-manager.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
@@ -80,11 +82,64 @@ function createRouteGuard(): () => boolean {
 function syncRelays(): void {
   relays = getRelays();
 }
+
+function showNewEventsNotification(timelineType: string, count: number): void {
+  // Remove existing notification if any
+  const existingNotification = document.getElementById("sw-new-events-notification");
+  if (existingNotification) {
+    existingNotification.remove();
+  }
+
+  // Create notification banner
+  const notification = document.createElement("div");
+  notification.id = "sw-new-events-notification";
+  notification.className = "fixed top-16 left-1/2 transform -translate-x-1/2 z-50 bg-indigo-600 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 cursor-pointer hover:bg-indigo-700 transition-colors";
+  notification.innerHTML = `
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+    </svg>
+    <span>${count} new ${count === 1 ? 'post' : 'posts'} available</span>
+    <button class="ml-2 text-sm underline">Refresh</button>
+  `;
+
+  notification.addEventListener("click", (): void => {
+    // Reload the current timeline
+    handleRoute();
+    notification.remove();
+  });
+
+  document.body.appendChild(notification);
+
+  // Auto-hide after 10 seconds
+  setTimeout((): void => {
+    if (notification.parentElement) {
+      notification.remove();
+    }
+  }, 10000);
+}
 document.addEventListener("DOMContentLoaded", (): void => {
   window.addEventListener("relays-updated", syncRelays);
   if (connectingMsg) {
     connectingMsg.style.display = "none"; // Hide connecting message by default
   }
+
+  // Register service worker for background sync
+  registerServiceWorker().then((success: boolean): void => {
+    if (success) {
+      console.log("[App] Service worker registered successfully");
+    }
+  }).catch((error: unknown): void => {
+    console.error("[App] Failed to register service worker:", error);
+  });
+
+  // Listen for new events from service worker
+  window.addEventListener("sw-new-events", ((event: CustomEvent): void => {
+    const { timelineType, count } = event.detail;
+    console.log(`[App] Service worker found ${count} new events for ${timelineType} timeline`);
+
+    // Show notification banner
+    showNewEventsNotification(timelineType, count);
+  }) as EventListener);
 
   // Setup search functionality
   setupSearchBar(output);
@@ -101,6 +156,21 @@ document.addEventListener("DOMContentLoaded", (): void => {
   // Setup composer overlay
   setupComposeOverlay({
     composeButton,
+    getSessionPrivateKey,
+    getRelays: (): string[] => relays,
+    publishEvent: publishEventToRelays,
+    refreshTimeline: async (): Promise<void> => {
+      const isRouteActive: () => boolean = createRouteGuard();
+      if (window.location.pathname === "/home") {
+        await loadHomePage(isRouteActive);
+      } else if (window.location.pathname === "/global") {
+        await loadGlobalPage(isRouteActive);
+      }
+    },
+  });
+
+  // Setup reply overlay
+  setupReplyOverlay({
     getSessionPrivateKey,
     getRelays: (): string[] => relays,
     publishEvent: publishEventToRelays,
@@ -548,6 +618,18 @@ function startBackgroundFetch(followedPubkeys: PubkeyHex[]): void {
   backgroundFetchInterval = window.setInterval(async () => {
     await fetchNewPosts(followedPubkeys);
   }, 30000);
+
+  // Start service worker periodic sync
+  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+  if (storedPubkey) {
+    startPeriodicSync({
+      userPubkey: storedPubkey as PubkeyHex,
+      followedPubkeys: followedPubkeys,
+      syncGlobal: false, // Only sync home timeline for now
+    }).catch((error: unknown): void => {
+      console.error("[App] Failed to start periodic sync:", error);
+    });
+  }
 }
 
 async function fetchNewPosts(followedPubkeys: PubkeyHex[]): Promise<void> {

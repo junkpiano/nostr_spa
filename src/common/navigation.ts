@@ -45,47 +45,127 @@ export function setupNavigation(options: NavigationOptions): void {
   const relaysButton: HTMLElement | null = document.getElementById('nav-relays');
   const settingsButton: HTMLElement | null = document.getElementById('nav-settings');
   const logoutButton: HTMLElement | null = document.getElementById('nav-logout');
+  const mobileMenuButton: HTMLElement | null = document.getElementById('mobile-menu-button');
+  const sidebar: HTMLElement | null = document.getElementById('sidebar');
+  const searchMobileButton: HTMLElement | null = document.getElementById('nav-search-mobile');
+  const searchOverlay: HTMLElement | null = document.getElementById('search-overlay');
+  const searchOverlayClose: HTMLElement | null = document.getElementById('search-overlay-close');
+  const searchOverlayBackdrop: HTMLElement | null = document.getElementById('search-overlay-backdrop');
+
+  // Mobile menu toggle
+  let isMobileMenuOpen = false;
+
+  const closeMobileMenu = (): void => {
+    if (sidebar) {
+      sidebar.classList.add('hidden');
+      sidebar.classList.remove('fixed', 'inset-0', 'z-50', 'bg-black/50', 'flex', 'items-start', 'pt-20', 'px-4');
+      const sidebarContent = sidebar.querySelector('div');
+      if (sidebarContent) {
+        sidebarContent.classList.remove('w-full', 'max-w-sm');
+      }
+      isMobileMenuOpen = false;
+    }
+  };
+
+  const openMobileMenu = (): void => {
+    if (sidebar) {
+      sidebar.classList.remove('hidden');
+      sidebar.classList.add('fixed', 'inset-0', 'z-50', 'bg-black/50', 'flex', 'items-start', 'pt-20', 'px-4');
+      const sidebarContent = sidebar.querySelector('div');
+      if (sidebarContent) {
+        sidebarContent.classList.add('w-full', 'max-w-sm');
+      }
+      isMobileMenuOpen = true;
+    }
+  };
+
+  if (mobileMenuButton) {
+    mobileMenuButton.addEventListener('click', (): void => {
+      if (isMobileMenuOpen) {
+        closeMobileMenu();
+      } else {
+        openMobileMenu();
+      }
+    });
+  }
+
+  // Close mobile menu when clicking outside
+  if (sidebar) {
+    sidebar.addEventListener('click', (event: MouseEvent): void => {
+      if (event.target === sidebar) {
+        closeMobileMenu();
+      }
+    });
+  }
+
+  // Auto-close mobile menu after navigation
+  const wrapNavigationHandler = (handler: () => void): (() => void) => {
+    return (): void => {
+      handler();
+      closeMobileMenu();
+    };
+  };
 
   if (homeButton) {
-    homeButton.addEventListener('click', (): void => {
+    homeButton.addEventListener('click', wrapNavigationHandler((): void => {
       window.history.pushState(null, '', '/home');
       options.handleRoute();
-    });
+    }));
   }
 
   if (globalButton) {
-    globalButton.addEventListener('click', (): void => {
+    globalButton.addEventListener('click', wrapNavigationHandler((): void => {
       window.history.pushState(null, '', '/global');
       options.handleRoute();
-    });
+    }));
   }
 
   if (notificationsButton) {
-    notificationsButton.addEventListener('click', (): void => {
+    notificationsButton.addEventListener('click', wrapNavigationHandler((): void => {
       window.history.pushState(null, '', '/notifications');
       options.handleRoute();
-    });
+    }));
   }
 
   if (relaysButton) {
-    relaysButton.addEventListener('click', (): void => {
+    relaysButton.addEventListener('click', wrapNavigationHandler((): void => {
       window.history.pushState(null, '', '/relays');
       options.handleRoute();
-    });
+    }));
   }
 
   if (settingsButton) {
-    settingsButton.addEventListener('click', (): void => {
+    settingsButton.addEventListener('click', wrapNavigationHandler((): void => {
       window.history.pushState(null, '', '/settings');
       options.handleRoute();
-    });
+    }));
   }
 
   if (logoutButton) {
-    logoutButton.addEventListener('click', (): void => {
+    logoutButton.addEventListener('click', wrapNavigationHandler((): void => {
       options.onLogout();
       window.history.pushState(null, '', '/home');
       options.handleRoute();
+    }));
+  }
+
+  // Mobile search overlay
+  if (searchMobileButton && searchOverlay) {
+    searchMobileButton.addEventListener('click', (): void => {
+      closeMobileMenu();
+      searchOverlay.style.display = 'block';
+    });
+  }
+
+  if (searchOverlayClose && searchOverlay) {
+    searchOverlayClose.addEventListener('click', (): void => {
+      searchOverlay.style.display = 'none';
+    });
+  }
+
+  if (searchOverlayBackdrop && searchOverlay) {
+    searchOverlayBackdrop.addEventListener('click', (): void => {
+      searchOverlay.style.display = 'none';
     });
   }
 }

@@ -465,6 +465,14 @@ export function renderEvent(
     : `<div class="text-xs text-gray-500">🕒 ${createdAt}</div>`;
   const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
   const canDeletePost: boolean = Boolean(storedPubkey && storedPubkey === event.pubkey);
+  const isLoggedIn: boolean = Boolean(storedPubkey);
+  const replyButtonHtml: string = isLoggedIn
+    ? `
+          <button class="reply-event-btn text-blue-500 hover:text-blue-700 transition-colors p-1 rounded" aria-label="Reply to post" title="Reply" data-event-id="${event.id}" data-event-pubkey="${event.pubkey}" data-event-author="${name}">
+            💬 Reply
+          </button>
+        `
+    : "";
   const deleteButtonHtml: string = canDeletePost
     ? `
           <button class="delete-event-btn text-red-500 hover:text-red-700 transition-colors p-1 rounded" aria-label="Delete post" title="Delete post">
@@ -483,6 +491,13 @@ export function renderEvent(
         .filter((value: string | undefined): value is string => Boolean(value)),
     ),
   );
+  const mentionedNprofiles: string[] = Array.from(
+    new Set(
+      [...contentSource.matchAll(/nostr:(nprofile1[0-9a-z]+)/gi)]
+        .map((match: RegExpMatchArray): string | undefined => match[1])
+        .filter((value: string | undefined): value is string => Boolean(value)),
+    ),
+  );
   const mentionNpubToPubkey: Map<string, PubkeyHex> = new Map();
   mentionedNpubs.forEach((mentionedNpub: string): void => {
     try {
@@ -492,6 +507,20 @@ export function renderEvent(
       }
     } catch (error: unknown) {
       console.warn("Failed to decode mentioned npub:", error);
+    }
+  });
+  mentionedNprofiles.forEach((mentionedNprofile: string): void => {
+    try {
+      const decoded = nip19.decode(mentionedNprofile);
+      if (decoded.type === "nprofile") {
+        const data: any = decoded.data;
+        const pubkey: string | undefined = data?.pubkey || (typeof data === "string" ? data : undefined);
+        if (pubkey) {
+          mentionNpubToPubkey.set(mentionedNprofile, pubkey as PubkeyHex);
+        }
+      }
+    } catch (error: unknown) {
+      console.warn("Failed to decode mentioned nprofile:", error);
     }
   });
   const referencedEventRefs: string[] = Array.from(
@@ -509,7 +538,21 @@ export function renderEvent(
     (): string => "",
   );
 
-  const contentWithMentions: string = contentWithNostrLinks.replace(
+  const contentWithNprofiles: string = contentWithNostrLinks.replace(
+    /(nostr:nprofile1[0-9a-z]+)/gi,
+    (nprofileRef: string): string => {
+      const mentionedNprofile: string = nprofileRef.replace(/^nostr:/i, "");
+      const pubkey: PubkeyHex | undefined = mentionNpubToPubkey.get(mentionedNprofile);
+      if (pubkey) {
+        const npub: Npub = nip19.npubEncode(pubkey);
+        const label: string = `@${mentionedNprofile.slice(0, 12)}...`;
+        return `<a href="/${npub}" class="text-indigo-600 underline mention-link" data-mention-nprofile="${mentionedNprofile}">${label}</a>`;
+      }
+      return nprofileRef;
+    },
+  );
+
+  const contentWithMentions: string = contentWithNprofiles.replace(
     /(nostr:npub1[0-9a-z]+)/gi,
     (npubRef: string): string => {
       const mentionedNpub: string = npubRef.replace(/^nostr:/i, "");
@@ -518,12 +561,22 @@ export function renderEvent(
     },
   );
 
+  // Check energy saving mode
+  const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
+
   const contentWithLinks: string = contentWithMentions.replace(
     /(https?:\/\/[^\s]+)/g,
     (url: string): string => {
-      if (url.match(/\.(jpeg|jpg|gif|png|webp|svg)$/i)) {
+      if (url.match(/\.(jpeg|jpg|gif|png|webp|svg|mp4|webm|mov|avi)$/i)) {
         const imageIndex: number = imageUrls.length;
         imageUrls.push(url);
+
+        // In energy saving mode, show link instead of loading media
+        if (isEnergySavingMode) {
+          const fileName = url.split('/').pop() || 'media';
+          return `<div class="my-2 p-2 bg-gray-100 rounded border border-gray-300"><span class="text-gray-600 text-xs">🖼️ Image: </span><a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline text-sm">${fileName}</a></div>`;
+        }
+
         return `<img src="${url}" alt="Image" class="my-2 max-w-full rounded shadow cursor-zoom-in event-image" loading="lazy" data-image-index="${imageIndex}" />`;
       }
 
@@ -546,11 +599,16 @@ export function renderEvent(
   if (imageUrls.length > 0) {
     div.dataset.images = JSON.stringify(imageUrls);
   }
+  // Avatar display based on energy saving mode
+  const avatarHtml: string = isEnergySavingMode
+    ? `<div class="w-12 h-12 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-xl">👤</div>`
+    : `<img src="${avatar}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
+         onerror="this.src='https://placekitten.com/100/100';" />`;
+
   div.innerHTML = `
 		    <div class="flex items-start space-x-4">
 	      <a href="/${npub}" class="flex-shrink-0 hover:opacity-80 transition-opacity">
-	        <img src="${avatar}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
-	          onerror="this.src='https://placekitten.com/100/100';" />
+	        ${avatarHtml}
 	      </a>
 		      <div class="flex-1 overflow-hidden">
         <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
@@ -562,7 +620,10 @@ export function renderEvent(
             <div class="reactions-container mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
             <div class="reactions-details mt-2" style="display: none;"></div>
             <div class="mt-2 flex items-center justify-between gap-2">
-                ${dateHtml}
+                <div class="flex items-center gap-2">
+                    ${dateHtml}
+                    ${replyButtonHtml}
+                </div>
                 ${deleteButtonHtml}
             </div>
 		      </div>
@@ -577,6 +638,22 @@ export function renderEvent(
   }
   if (mentionNpubToPubkey.size > 0) {
     enrichMentionDisplayNames(div, mentionNpubToPubkey);
+  }
+
+  const replyButton: HTMLButtonElement | null = div.querySelector(".reply-event-btn") as HTMLButtonElement | null;
+  if (replyButton) {
+    replyButton.addEventListener("click", (): void => {
+      // Trigger reply overlay via custom event
+      const replyEvent = new CustomEvent("open-reply", {
+        detail: {
+          eventId: event.id,
+          eventPubkey: event.pubkey,
+          eventAuthor: name,
+          eventContent: contentSource,
+        },
+      });
+      window.dispatchEvent(replyEvent);
+    });
   }
 
   const deleteButton: HTMLButtonElement | null = div.querySelector(".delete-event-btn") as HTMLButtonElement | null;
@@ -602,7 +679,8 @@ export function renderEvent(
     });
   }
 
-  if (urls.length > 0) {
+  // Skip OGP/embeds in energy saving mode
+  if (urls.length > 0 && !isEnergySavingMode) {
     const ogpContainer: HTMLElement | null = div.querySelector(".ogp-container");
     if (ogpContainer) {
       urls.forEach(async (url: string): Promise<void> => {
@@ -716,16 +794,21 @@ async function renderParentEventCard(
       : parentContent;
     const parentPath: string = `/${nip19.neventEncode({ id: parentEvent.id })}`;
 
+    const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
+    const parentAvatarHtml: string = isEnergySavingMode
+      ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
+      : `<img
+          src="${parentAvatar}"
+          alt="${parentName}"
+          class="w-8 h-8 rounded-full object-cover flex-shrink-0"
+          onerror="this.src='https://placekitten.com/80/80';"
+        />`;
+
     card.innerHTML = `
       <a href="${parentPath}" class="block hover:bg-amber-100 rounded transition-colors p-1">
         <div class="text-xs text-amber-700 font-semibold mb-1">Replying to</div>
         <div class="flex items-start gap-2">
-          <img
-            src="${parentAvatar}"
-            alt="${parentName}"
-            class="w-8 h-8 rounded-full object-cover flex-shrink-0"
-            onerror="this.src='https://placekitten.com/80/80';"
-          />
+          ${parentAvatarHtml}
           <div class="min-w-0">
             <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${parentName}</div>
             <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${preview || "(no content)"}</div>
@@ -745,14 +828,24 @@ async function enrichMentionDisplayNames(
 ): Promise<void> {
   const relays: string[] = getRelays();
 
-  for (const [mentionedNpub, mentionedPubkey] of mentionNpubToPubkey.entries()) {
+  for (const [mentionedRef, mentionedPubkey] of mentionNpubToPubkey.entries()) {
     try {
       const mentionedProfile: NostrProfile | null = await fetchProfile(mentionedPubkey, relays);
-      const displayName: string = getDisplayName(mentionedNpub as Npub, mentionedProfile);
-      const anchors: NodeListOf<HTMLAnchorElement> = eventContainer.querySelectorAll(
-        `a.mention-link[data-mention-npub="${mentionedNpub}"]`,
+      const mentionedNpub: Npub = nip19.npubEncode(mentionedPubkey);
+      const displayName: string = getDisplayName(mentionedNpub, mentionedProfile);
+
+      // Handle both npub and nprofile mentions
+      const npubAnchors: NodeListOf<HTMLAnchorElement> = eventContainer.querySelectorAll(
+        `a.mention-link[data-mention-npub="${mentionedRef}"]`,
       );
-      anchors.forEach((anchor: HTMLAnchorElement): void => {
+      const nprofileAnchors: NodeListOf<HTMLAnchorElement> = eventContainer.querySelectorAll(
+        `a.mention-link[data-mention-nprofile="${mentionedRef}"]`,
+      );
+
+      npubAnchors.forEach((anchor: HTMLAnchorElement): void => {
+        anchor.textContent = `@${displayName}`;
+      });
+      nprofileAnchors.forEach((anchor: HTMLAnchorElement): void => {
         anchor.textContent = `@${displayName}`;
       });
     } catch (error: unknown) {
@@ -886,15 +979,20 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
         : referencedContent;
       const referencedPath: string = `/${eventRef}`;
 
+      const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
+      const referencedAvatarHtml: string = isEnergySavingMode
+        ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
+        : `<img
+            src="${referencedAvatar}"
+            alt="${referencedName}"
+            class="w-8 h-8 rounded-full object-cover flex-shrink-0"
+            onerror="this.src='https://placekitten.com/80/80';"
+          />`;
+
       card.innerHTML = `
                 <a href="${referencedPath}" class="block hover:bg-indigo-100 rounded transition-colors p-1">
                     <div class="flex items-start gap-2">
-                        <img
-                            src="${referencedAvatar}"
-                            alt="${referencedName}"
-                            class="w-8 h-8 rounded-full object-cover flex-shrink-0"
-                            onerror="this.src='https://placekitten.com/80/80';"
-                        />
+                        ${referencedAvatarHtml}
                         <div class="min-w-0">
                             <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${referencedName}</div>
                             <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${referencedText || "(no content)"}</div>
