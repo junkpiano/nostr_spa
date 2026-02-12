@@ -1,9 +1,11 @@
 import { nip19 } from 'nostr-tools';
+import type { EventPacket } from 'rx-nostr';
 import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
 import { fetchProfile } from "../profile/profile.js";
 import { renderEvent } from "../../common/event-render.js";
 import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
-import { createRelayWebSocket } from "../../common/relay-socket.js";
+import { getRxNostr, createBackwardReq } from "../relays/rx-nostr-client.js";
+import { getRelays } from "../relays/relays.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
 import {
   getCachedTimeline,
@@ -16,18 +18,19 @@ import {
 export async function loadHomeTimeline(
   followedPubkeys: PubkeyHex[],
   kinds: number[],
-  relays: string[],
+  _relays: string[],
   limit: number,
   untilTimestamp: number,
   seenEventIds: Set<string>,
   output: HTMLElement,
   connectingMsg: HTMLElement | null,
-  activeWebSockets: WebSocket[] = [],
+  _activeWebSockets: WebSocket[] = [],
   activeTimeouts: number[] = [],
   isRouteActive?: () => boolean,
   userPubkey?: PubkeyHex | undefined,
 ): Promise<void> {
   const routeIsActive: () => boolean = isRouteActive || (() => true);
+  const relays = getRelays();
   if (!routeIsActive()) {
     return;
   }
@@ -58,22 +61,34 @@ export async function loadHomeTimeline(
   if (isInitialLoad && userPubkey) {
     try {
       const cached = await getCachedTimeline("home", userPubkey, { limit: 50 });
-      if (cached.hasCache && cached.events.length > 0) {
-        console.log(`[HomeTimeline] Loaded ${cached.events.length} events from cache`);
-        if (!routeIsActive()) return; // Guard before DOM update
-        clearedPlaceholder = true;
-        output.innerHTML = "";
+      const cacheAgeMinutes = cached.hasCache
+        ? Math.floor((Date.now() / 1000 - cached.newestTimestamp) / 60)
+        : 0;
 
-        // Render cached events
-        for (const event of cached.events) {
-          // TODO: Guarding inside loop can leave inconsistent state - renderedEventIds and seenEventIds
-          // may be partially updated. Consider checking route before loop or batching state updates.
-          if (!routeIsActive()) return; // Guard before each render
-          if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
-            continue;
-          }
-          renderedEventIds.add(event.id);
-          seenEventIds.add(event.id);
+      // Only use cache if it's less than 30 minutes old (home timeline can be slightly older)
+      const CACHE_MAX_AGE_MINUTES = 30;
+      const isCacheStale = cacheAgeMinutes > CACHE_MAX_AGE_MINUTES;
+
+      if (cached.hasCache && cached.events.length > 0) {
+        console.log(`[HomeTimeline] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`);
+
+        if (isCacheStale) {
+          console.log(`[HomeTimeline] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`);
+          // Don't display stale cache, go straight to fresh relay fetch
+        } else {
+          if (!routeIsActive()) return; // Guard before DOM update
+          clearedPlaceholder = true;
+          output.innerHTML = "";
+
+          // Render cached events
+          // Check route once before loop to avoid partial state updates
+          if (routeIsActive()) {
+            for (const event of cached.events) {
+              if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
+                continue;
+              }
+              renderedEventIds.add(event.id);
+              seenEventIds.add(event.id);
 
           // Try to get profile from IndexedDB cache
           let profile: NostrProfile | null = null;
@@ -86,18 +101,20 @@ export async function loadHomeTimeline(
             }
           }
 
-          const npubStr: Npub = nip19.npubEncode(event.pubkey);
-          renderEvent(event, profile, npubStr, event.pubkey, output);
-        }
+              const npubStr: Npub = nip19.npubEncode(event.pubkey);
+              renderEvent(event, profile, npubStr, event.pubkey, output);
+            }
+          }
 
-        // Hide connecting message since we have cached content
-        if (connectingMsg) {
-          connectingMsg.style.display = "none";
-        }
+          // Hide connecting message since we have cached content
+          if (connectingMsg) {
+            connectingMsg.style.display = "none";
+          }
 
-        // IMPORTANT: Don't update untilTimestamp from cache on initial load
-        // We want to fetch the LATEST posts from relays, not continue from cache
-        untilTimestamp = originalUntilTimestamp;
+          // IMPORTANT: Don't update untilTimestamp from cache on initial load
+          // We want to fetch the LATEST posts from relays, not continue from cache
+          untilTimestamp = originalUntilTimestamp;
+        }
       }
     } catch (error) {
       console.error("[HomeTimeline] Failed to load from cache:", error);
@@ -218,7 +235,19 @@ export async function loadHomeTimeline(
 
     if (renderedEventIds.size === 0 && seenEventIds.size === 0) {
       if (!routeIsActive()) return; // Guard before DOM update
-      output.innerHTML = "<p class='text-red-500'>No posts found from selected kinds.</p>";
+      console.warn(`[HomeTimeline] No events found. Authors: ${followedPubkeys.length}, Kinds: ${kinds.join(', ')}, Relays: ${relays.length}`);
+      output.innerHTML = `
+        <div class="text-center py-8">
+          <p class="text-gray-700 mb-4">No posts found in your home timeline.</p>
+          <p class="text-gray-500 text-sm mb-2">This could mean:</p>
+          <ul class="text-gray-500 text-sm list-disc list-inside mb-4">
+            <li>The people you follow haven't posted recently</li>
+            <li>Your relays are not responding</li>
+            <li>You're not following anyone yet</li>
+          </ul>
+          <p class="text-gray-600 text-sm">Try viewing the <a href="/global" class="text-indigo-600 hover:underline">Global Timeline</a> or check your <a href="/relays" class="text-indigo-600 hover:underline">Relay settings</a>.</p>
+        </div>
+      `;
     }
 
     if (loadMoreBtn) {
@@ -253,61 +282,47 @@ export async function loadHomeTimeline(
   }, 8000);
   activeTimeouts.push(safetyTimeoutId);
 
-  for (const relayUrl of relays) {
-    const socket: WebSocket = createRelayWebSocket(relayUrl);
-    activeWebSockets.push(socket);
+  // Use rx-nostr to fetch events
+  const rxNostr = getRxNostr();
+  const req = createBackwardReq();
 
-    socket.onopen = (): void => {
+  // Emit the filter to start fetching
+  const filter = {
+    kinds: kinds,
+    authors: followedPubkeys,
+    until: untilTimestamp,
+    limit: limit,
+  };
+  console.log(`[HomeTimeline] Fetching events with filter:`, {
+    kinds: filter.kinds,
+    authorsCount: filter.authors.length,
+    until: new Date(filter.until * 1000).toISOString(),
+    limit: filter.limit,
+    relaysCount: relays.length,
+  });
+
+  const subscription = rxNostr.use(req, { relays }).subscribe({
+    next: (packet: EventPacket) => {
       if (!routeIsActive()) {
-        socket.close();
+        subscription.unsubscribe();
         return;
       }
-      const subId: string = "home-" + Math.random().toString(36).slice(2);
-      const req: [string, string, { kinds: number[]; authors: string[]; until: number; limit: number }] = [
-        "REQ",
-        subId,
-        {
-          kinds: kinds,
-          authors: followedPubkeys,
-          until: untilTimestamp,
-          limit: limit,
-        },
-      ];
-      socket.send(JSON.stringify(req));
-    };
 
-    socket.onmessage = async (msg: MessageEvent): Promise<void> => {
-      if (!routeIsActive()) {
-        return;
+      const event: NostrEvent = packet.event;
+      console.log(`[HomeTimeline] Received event ${event.id} from ${packet.from} (kind ${event.kind})`);
+      if (seenEventIds.has(event.id)) return;
+      seenEventIds.add(event.id);
+
+      if (connectingMsg) {
+        connectingMsg.style.display = "none";
       }
-      const arr: any[] = JSON.parse(msg.data);
-      if (arr[0] === "EVENT") {
-        const event: NostrEvent = arr[2];
-        if (seenEventIds.has(event.id)) return;
-        seenEventIds.add(event.id);
 
-        if (connectingMsg) {
-          connectingMsg.style.display = "none";
-        }
-
-        bufferedEvents.push(event);
-        scheduleFlush();
-      } else if (arr[0] === "EOSE") {
-        socket.close();
-        pendingRelays -= 1;
-        if (pendingRelays <= 0) {
-          finalizeLoading();
-        } else {
-          scheduleFlush();
-        }
-      }
-    };
-
-    socket.onerror = (err: Event): void => {
-      if (!routeIsActive()) {
-        return;
-      }
-      console.error(`WebSocket error [${relayUrl}]`, err);
+      bufferedEvents.push(event);
+      scheduleFlush();
+    },
+    error: (err) => {
+      if (!routeIsActive()) return;
+      console.error('[HomeTimeline] Subscription error:', err);
       if (connectingMsg) {
         connectingMsg.style.display = "none";
       }
@@ -315,14 +330,22 @@ export async function loadHomeTimeline(
         (loadMoreBtn as HTMLButtonElement).disabled = false;
         loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
       }
-      pendingRelays -= 1;
-      if (pendingRelays <= 0) {
+      // Force finalization on error
+      if (!finalized) {
         finalizeLoading();
-      } else {
-        scheduleFlush();
       }
-    };
-  }
+    },
+    complete: () => {
+      console.log(`[HomeTimeline] Subscription complete. Received ${bufferedEvents.length} events.`);
+      if (!finalized) {
+        finalizeLoading();
+      }
+    }
+  });
+
+  // Emit filter AFTER subscribe — rx-nostr uses a regular Subject, not ReplaySubject,
+  // so emissions before subscription are lost
+  req.emit(filter);
 
   if (loadMoreBtn) {
     // Remove old listeners and add new one
@@ -332,13 +355,13 @@ export async function loadHomeTimeline(
       loadHomeTimeline(
         followedPubkeys,
         kinds,
-        relays,
+        [],
         limit,
         untilTimestamp,
         seenEventIds,
         output,
         connectingMsg,
-        activeWebSockets,
+        [],
         activeTimeouts,
         routeIsActive,
         userPubkey,

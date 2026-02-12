@@ -1,4 +1,5 @@
 import { finalizeEvent } from 'nostr-tools';
+import { storeEvent } from './db/index.js';
 import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
 interface ReplyOverlayOptions {
@@ -136,6 +137,7 @@ export function setupReplyOverlay(options: ReplyOverlayOptions): void {
 
       const relays: string[] = options.getRelays();
       await options.publishEvent(signedEvent, relays);
+      await storeEvent(signedEvent, { isHomeTimeline: false });
 
       statusEl.textContent = "Reply published!";
 

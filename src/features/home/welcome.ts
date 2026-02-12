@@ -47,7 +47,7 @@ export async function showInputForm(options: ShowInputFormOptions): Promise<void
               Use Private Key
             </button>
           </div>
-          <p class="text-xs text-gray-500">Private keys are not stored. We only derive your public key locally.</p>
+          <p class="text-xs text-gray-500">Private keys are stored temporarily in your browser session (cleared when you close the browser). For better security, use a Nostr extension instead.</p>
         </div>
       </div>
     `;

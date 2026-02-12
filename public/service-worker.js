@@ -163,6 +163,7 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
 
     if (!newestTimestamp) {
       console.log('[ServiceWorker] No cached timeline, skipping sync');
+      db.close();
       return { success: true, newEventCount: 0 };
     }
 
@@ -176,6 +177,7 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
     );
 
     if (newEvents.length === 0) {
+      db.close();
       return { success: true, newEventCount: 0 };
     }
 
@@ -187,12 +189,23 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
 
     console.log(`[ServiceWorker] Synced ${newEvents.length} new events`);
 
+    db.close();
+
     return {
       success: true,
       newEventCount: newEvents.length,
     };
   } catch (error) {
     console.error('[ServiceWorker] Sync error:', error);
+    // If error is "Database not initialized", return success with 0 events
+    // This is expected on first load before the main app initializes the database
+    if (error.message === 'Database not initialized') {
+      console.log('[ServiceWorker] Database not initialized yet, skipping sync');
+      return {
+        success: true,
+        newEventCount: 0,
+      };
+    }
     return {
       success: false,
       newEventCount: 0,
@@ -204,8 +217,22 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
 // IndexedDB helpers for service worker context
 function openDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('nostr-app-db', 1);
-    request.onsuccess = () => resolve(request.result);
+    // Use the same database name as the main app
+    const request = indexedDB.open('nostr_cache_v2', 1);
+
+    request.onsuccess = () => {
+      const db = request.result;
+      // Check if required object stores exist
+      if (!db.objectStoreNames.contains('timelines') ||
+          !db.objectStoreNames.contains('events')) {
+        console.warn('[ServiceWorker] Required object stores not found, database not initialized yet');
+        db.close();
+        reject(new Error('Database not initialized'));
+        return;
+      }
+      resolve(db);
+    };
+
     request.onerror = () => reject(request.error);
   });
 }
@@ -213,15 +240,20 @@ function openDB() {
 async function getTimelineNewestTimestamp(db, type, pubkey) {
   const key = `${type}:${pubkey || ''}`;
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('timelines', 'readonly');
-    const store = tx.objectStore('timelines');
-    const request = store.get(key);
+    try {
+      const tx = db.transaction('timelines', 'readonly');
+      const store = tx.objectStore('timelines');
+      const request = store.get(key);
 
-    request.onsuccess = () => {
-      const timeline = request.result;
-      resolve(timeline?.newestTimestamp || 0);
-    };
-    request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const timeline = request.result;
+        resolve(timeline?.newestTimestamp || 0);
+      };
+      request.onerror = () => reject(request.error);
+    } catch (error) {
+      console.error('[ServiceWorker] Failed to get timeline timestamp:', error);
+      reject(error);
+    }
   });
 }
 

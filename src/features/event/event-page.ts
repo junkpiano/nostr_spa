@@ -181,8 +181,9 @@ async function renderReplyTree(
   output: HTMLElement,
   isRouteActive: () => boolean,
 ): Promise<void> {
-  // TODO: Network fetch happens even if route becomes inactive before this function runs.
-  // Consider checking isRouteActive() before fetchRepliesForEvent to avoid wasted work.
+  // Check if route is still active before fetching
+  if (!isRouteActive()) return;
+
   const replies: NostrEvent[] = await fetchRepliesForEvent(rootEvent.id, relays);
   if (!isRouteActive()) return; // Guard before DOM update
   const section: HTMLDivElement = document.createElement("div");

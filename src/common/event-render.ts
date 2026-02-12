@@ -3,7 +3,7 @@ import { getAvatarURL, getDisplayName, fetchOGP, isTwitterURL, fetchTwitterEmbed
 import { fetchProfile } from "../features/profile/profile.js";
 import { getRelays } from "../features/relays/relays.js";
 import { getSessionPrivateKey } from "./session.js";
-import { fetchEventById, isEventDeleted } from "./events-queries.js";
+import { cacheDeletionStatus, fetchEventById, getCachedDeletionStatus, isEventDeleted } from "./events-queries.js";
 import { createRelayWebSocket } from "./relay-socket.js";
 import { getCachedEvent, setCachedEvent } from "./event-cache.js";
 import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../../types/nostr";
@@ -757,6 +757,31 @@ function resolveParentEventId(event: NostrEvent): string | null {
   return eTags[eTags.length - 1]?.[1] || null;
 }
 
+function checkDeletionAsync(
+  eventId: string,
+  authorPubkey: PubkeyHex,
+  relays: string[],
+  cardElement: HTMLElement,
+  deletedMessage: string,
+): void {
+  const cachedStatus: boolean | undefined = getCachedDeletionStatus(eventId);
+  if (cachedStatus !== undefined) {
+    return;
+  }
+
+  void isEventDeleted(eventId, authorPubkey, relays)
+    .then((deleted: boolean): void => {
+      cacheDeletionStatus(eventId, deleted);
+      if (deleted) {
+        cardElement.textContent = deletedMessage;
+      }
+    })
+    .catch((err: unknown): void => {
+      console.warn(`Failed to check deletion status for ${eventId}:`, err);
+      cacheDeletionStatus(eventId, false);
+    });
+}
+
 async function renderParentEventCard(
   parentEventId: string,
   parentAuthorPubkey: PubkeyHex | null,
@@ -771,10 +796,13 @@ async function renderParentEventCard(
   try {
     const relays: string[] = getRelays();
     if (parentAuthorPubkey) {
-      const deleted: boolean = await isEventDeleted(parentEventId, parentAuthorPubkey, relays);
-      if (deleted) {
+      const cachedStatus: boolean | undefined = getCachedDeletionStatus(parentEventId);
+      if (cachedStatus === true) {
         card.textContent = "Parent post was deleted.";
         return;
+      }
+      if (cachedStatus === undefined) {
+        checkDeletionAsync(parentEventId, parentAuthorPubkey, relays, card, "Parent post was deleted.");
       }
     }
 
@@ -956,10 +984,13 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
 
       const relaysToUse: string[] = relayHints.length > 0 ? relayHints : currentRelays;
       if (referencedAuthorPubkey) {
-        const deleted: boolean = await isEventDeleted(eventId, referencedAuthorPubkey, relaysToUse);
-        if (deleted) {
+        const cachedStatus: boolean | undefined = getCachedDeletionStatus(eventId);
+        if (cachedStatus === true) {
           card.textContent = "Referenced event was deleted.";
           continue;
+        }
+        if (cachedStatus === undefined) {
+          checkDeletionAsync(eventId, referencedAuthorPubkey, relaysToUse, card, "Referenced event was deleted.");
         }
       }
 

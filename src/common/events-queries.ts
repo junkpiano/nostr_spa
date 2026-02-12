@@ -2,6 +2,16 @@ import { createRelayWebSocket } from "./relay-socket.js";
 import { recordRelayFailure } from "../features/relays/relays.js";
 import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
+const deletionCache: Map<string, boolean> = new Map();
+
+export function getCachedDeletionStatus(eventId: string): boolean | undefined {
+  return deletionCache.get(eventId);
+}
+
+export function cacheDeletionStatus(eventId: string, deleted: boolean): void {
+  deletionCache.set(eventId, deleted);
+}
+
 export async function fetchFollowList(pubkeyHex: PubkeyHex, relays: string[]): Promise<PubkeyHex[]> {
   console.log(`Fetching follow list for ${pubkeyHex}`);
   let latestFollowTimestamp: number = -1;
@@ -164,9 +174,12 @@ export async function isEventDeleted(
     return false;
   }
 
-  for (const relayUrl of relays) {
+  const perRelayTimeoutMs: number = 3000;
+  const overallTimeoutMs: number = 3000;
+
+  const checks: Promise<boolean>[] = relays.map(async (relayUrl: string): Promise<boolean> => {
     try {
-      const deleted: boolean = await new Promise<boolean>((resolve) => {
+      return await new Promise<boolean>((resolve) => {
         let settled: boolean = false;
         const socket: WebSocket = createRelayWebSocket(relayUrl);
 
@@ -181,7 +194,7 @@ export async function isEventDeleted(
         const timeout = setTimeout((): void => {
           recordRelayFailure(relayUrl);
           finish(false);
-        }, 5000);
+        }, perRelayTimeoutMs);
 
         socket.onopen = (): void => {
           const subId: string = "deleted-" + Math.random().toString(36).slice(2);
@@ -218,16 +231,52 @@ export async function isEventDeleted(
           finish(false);
         };
       });
-
-      if (deleted) {
-        return true;
-      }
     } catch (e) {
       console.warn(`Failed to check delete event on ${relayUrl}:`, e);
+      return false;
     }
-  }
+  });
 
-  return false;
+  return await new Promise<boolean>((resolve) => {
+    let settled: boolean = false;
+    let pending: number = checks.length;
+
+    const finish = (value: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(overallTimeout);
+      resolve(value);
+    };
+
+    const overallTimeout = setTimeout((): void => {
+      finish(false);
+    }, overallTimeoutMs);
+
+    if (pending === 0) {
+      finish(false);
+      return;
+    }
+
+    checks.forEach((check: Promise<boolean>): void => {
+      check
+        .then((deleted: boolean): void => {
+          if (deleted) {
+            finish(true);
+            return;
+          }
+          pending -= 1;
+          if (pending <= 0) {
+            finish(false);
+          }
+        })
+        .catch((): void => {
+          pending -= 1;
+          if (pending <= 0) {
+            finish(false);
+          }
+        });
+    });
+  });
 }
 
 export async function fetchRepliesForEvent(eventId: string, relays: string[]): Promise<NostrEvent[]> {

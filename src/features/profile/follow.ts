@@ -151,7 +151,7 @@ export async function publishEventToRelays(
         };
       });
     } catch (e) {
-      console.warn(`Failed to publish follow event to ${relayUrl}:`, e);
+      console.warn(`Failed to publish event to ${relayUrl}:`, e);
     }
   });
 

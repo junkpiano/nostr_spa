@@ -6,6 +6,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A single-page Nostr client built with Vite and vanilla TypeScript. Users can view their home timeline, explore the global timeline, and search posts. The app queries multiple Nostr relays in parallel via WebSocket and displays results in real-time with client-side routing.
 
+## Development Workflow: Architect-Worker Pattern
+
+**Claude Code acts as the Architect, Codex MCP as the Worker.**
+
+When Codex MCP is available, follow this pattern:
+
+1. **Claude Code (Architect) responsibilities:**
+   - Understand the user's requirements and clarify ambiguities
+   - Design the system architecture and technical approach
+   - Define functional requirements (what the system should do)
+   - Define non-functional requirements (performance, security, maintainability)
+   - Specify interfaces, data models, and module boundaries
+   - Identify files to be modified or created
+   - Make architectural decisions and document rationale
+   - Review Codex's implementation for architectural consistency
+
+2. **Codex MCP (Worker) responsibilities:**
+   - Implement the specifications provided by Claude Code
+   - Write code according to the architectural design
+   - Follow coding standards and patterns specified
+   - Handle implementation details and edge cases
+   - Execute repetitive or routine coding tasks
+
+3. **Communication protocol:**
+   - Claude Code provides Codex with:
+     - Clear system design documentation
+     - Functional specifications (features, behaviors, use cases)
+     - Non-functional specifications (performance targets, error handling, validation rules)
+     - File structure and module organization
+     - API contracts and data schemas
+     - Code style and patterns to follow
+   - Codex implements the design and reports back
+   - Claude Code reviews, provides feedback, and iterates if needed
+
+4. **When to use Codex:**
+   - Large-scale feature implementations
+   - Multi-file refactoring with clear specifications
+   - Repetitive code generation (similar components, CRUD operations)
+   - Implementation of well-defined APIs or modules
+
+5. **When Claude Code should implement directly:**
+   - Quick fixes or small changes
+   - Architectural explorations or prototypes
+   - Situations requiring real-time user clarification
+   - Critical sections requiring careful judgment
+
+**Example usage:**
+```
+User: "Add a feature to filter posts by hashtags"
+
+Claude Code (Architect):
+1. Clarifies requirements with user (UI placement, filter behavior, etc.)
+2. Designs the solution:
+   - Add hashtag extraction function in utils.ts
+   - Modify event rendering to display hashtags as clickable links
+   - Add filter state management in app.ts
+   - Update UI with filter chips in index.html
+   - Define data flow: click hashtag → update filter → re-render timeline
+3. Provides detailed specs to Codex MCP
+4. Reviews Codex's implementation for correctness and consistency
+```
+
 ## Build & Development Commands
 
 ```bash

@@ -1,8 +1,9 @@
 declare module 'emoji-dictionary' {
   const emojiDictionary: {
-    getEmoji: (code: string) => string | undefined;
+    getUnicode: (code: string) => string | undefined;
     getName: (emoji: string) => string | undefined;
-    getAliases: (code: string) => string[];
+    names: string[];
+    unicode: string[];
   };
   export default emojiDictionary;
 }

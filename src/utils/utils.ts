@@ -18,7 +18,7 @@ export function getDisplayName(npub: Npub, profile: NostrProfile | null): string
 
 export function replaceEmojiShortcodes(content: string): string {
   return content.replace(/:([a-z0-9_+-]+):/gi, (match: string, code: string): string => {
-    const emoji: string | undefined = emojiDictionary.getEmoji(code);
+    const emoji: string | undefined = emojiDictionary.getUnicode(code);
     return emoji || match;
   });
 }

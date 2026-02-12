@@ -40,6 +40,7 @@ export {
   getEvents,
   queryEvents,
   countEvents,
+  countProtectedEvents,
   pruneEvents,
   clearEvents,
   deleteEvents,

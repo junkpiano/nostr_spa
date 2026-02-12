@@ -5,7 +5,7 @@ import {
   isIndexedDBAvailable,
 } from "./indexeddb.js";
 import { STORE_NAMES, type Metadata, type SyncStatus, type CacheStats } from "./types.js";
-import { countEvents } from "./events-store.js";
+import { countEvents, countProtectedEvents } from "./events-store.js";
 import { countProfiles } from "./profiles-store.js";
 import { countTimelines } from "./timelines-store.js";
 
@@ -118,8 +118,9 @@ export async function getCacheStats(): Promise<CacheStats> {
   }
 
   try {
-    const [eventCount, profileCount, timelineCount] = await Promise.all([
+    const [eventCount, protectedCount, profileCount, timelineCount] = await Promise.all([
       countEvents(),
+      countProtectedEvents(),
       countProfiles(),
       countTimelines(),
     ]);
@@ -133,7 +134,7 @@ export async function getCacheStats(): Promise<CacheStats> {
       events: {
         count: eventCount,
         bytes: eventBytes,
-        protected: 0, // TODO: Calculate protected count
+        protected: protectedCount,
       },
       profiles: {
         count: profileCount,

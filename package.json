@@ -18,6 +18,8 @@
     },
     "dependencies": {
         "emoji-dictionary": "^1.0.12",
-        "nostr-tools": "^2.23.0"
+        "nostr-tools": "^2.23.0",
+        "rx-nostr": "^3.6.2",
+        "rxjs": "^7.8.2"
     }
 }

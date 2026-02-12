@@ -10,6 +10,7 @@ interface RelaysPageOptions {
   setRelays: (relays: string[]) => void;
   normalizeRelayUrl: (rawUrl: string) => string | null;
   onRelaysChanged: () => void;
+  onBroadcastRequested?: () => Promise<void>;
   profileSection: HTMLElement | null;
   output: HTMLElement | null;
 }
@@ -43,6 +44,9 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         <div class="text-gray-600">
           Manage the relays used for fetching profiles and timelines. Changes are saved in your browser.
         </div>
+        <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-3 text-xs">
+          When you add a new relay, use Broadcast to re-send your recent posts to it.
+        </div>
         <div class="flex flex-col sm:flex-row gap-2">
           <input id="relay-input" type="text" placeholder="wss://relay.example.com"
             class="border border-gray-300 rounded-lg px-4 py-2 flex-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -52,6 +56,14 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
           </button>
         </div>
         <p id="relay-error" class="text-sm text-red-600"></p>
+        <div class="flex flex-col sm:flex-row gap-2">
+          <button id="broadcast-posts"
+            class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow">
+            Broadcast Posts
+          </button>
+          <span class="text-xs text-gray-500 self-center">Re-send your recent posts to all relays.</span>
+        </div>
+        <p id="broadcast-status" class="text-xs text-gray-600"></p>
         <div id="relay-list" class="space-y-2"></div>
       </div>
     `;
@@ -61,6 +73,8 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
   const relayAddButton: HTMLElement | null = document.getElementById("relay-add");
   const relayError: HTMLElement | null = document.getElementById("relay-error");
   const relayListEl: HTMLElement | null = document.getElementById("relay-list");
+  const broadcastButton: HTMLButtonElement | null = document.getElementById("broadcast-posts") as HTMLButtonElement;
+  const broadcastStatus: HTMLElement | null = document.getElementById("broadcast-status");
 
   let currentRelays: string[] = options.getRelays();
   let relayStatusSockets: WebSocket[] = [];
@@ -257,6 +271,26 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
     relayInput.addEventListener("keypress", (e: KeyboardEvent): void => {
       if (e.key === "Enter" && relayAddButton) {
         relayAddButton.click();
+      }
+    });
+  }
+
+  if (broadcastButton) {
+    broadcastButton.addEventListener("click", async (): Promise<void> => {
+      if (!options.onBroadcastRequested) {
+        return;
+      }
+      broadcastButton.disabled = true;
+      broadcastButton.classList.add("opacity-60", "cursor-not-allowed");
+      if (broadcastStatus) {
+        broadcastStatus.textContent = "Broadcasting posts...";
+        broadcastStatus.className = "text-xs text-gray-600";
+      }
+      try {
+        await options.onBroadcastRequested();
+      } finally {
+        broadcastButton.disabled = false;
+        broadcastButton.classList.remove("opacity-60", "cursor-not-allowed");
       }
     });
   }

@@ -256,6 +256,43 @@ export async function countEvents(): Promise<number> {
 }
 
 /**
+ * Counts protected events (home timeline events)
+ */
+export async function countProtectedEvents(): Promise<number> {
+  if (!isIndexedDBAvailable()) return 0;
+
+  try {
+    const tx = await createTransaction(STORE_NAMES.EVENTS, "readonly");
+    const store = tx.objectStore(STORE_NAMES.EVENTS);
+
+    return new Promise<number>((resolve, reject) => {
+      let count = 0;
+      const request = store.openCursor();
+
+      request.onsuccess = (): void => {
+        const cursor = request.result;
+        if (cursor) {
+          const cachedEvent = cursor.value as CachedEvent;
+          if (cachedEvent.isHomeTimeline) {
+            count++;
+          }
+          cursor.continue();
+        } else {
+          resolve(count);
+        }
+      };
+
+      request.onerror = (): void => {
+        reject(request.error);
+      };
+    });
+  } catch (error) {
+    console.error("[EventsStore] Failed to count protected events:", error);
+    return 0;
+  }
+}
+
+/**
  * Prunes old events when limits are exceeded
  */
 export async function pruneEvents(): Promise<number> {

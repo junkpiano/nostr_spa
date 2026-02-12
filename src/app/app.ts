@@ -8,6 +8,7 @@ import { setupReplyOverlay } from "../common/reply.js";
 import { setupImageOverlay } from "../common/overlays.js";
 import { getAllRelays, getRelays, setRelays, recordRelayFailure, normalizeRelayUrl } from "../features/relays/relays.js";
 import { loadRelaysPage } from "../features/relays/relays-page.js";
+import { broadcastRecentPosts } from "../features/broadcast/broadcast.js";
 import { loadSettingsPage } from "../features/settings/settings-page.js";
 import { setupFollowToggle, publishEventToRelays } from "../features/profile/follow.js";
 import { setupSearchBar } from "../common/search.js";
@@ -19,6 +20,7 @@ import { loadEventPage } from "../features/event/event-page.js";
 import { loadUserHomeTimeline } from "../features/home/home-loader.js";
 import { createRelayWebSocket } from "../common/relay-socket.js";
 import { registerServiceWorker, startPeriodicSync } from "../common/sync/service-worker-manager.js";
+import { deleteTimeline } from "../common/db/index.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../../types/nostr";
 
 const output: HTMLElement | null = document.getElementById("nostr-output");
@@ -281,6 +283,41 @@ function handleRoute(): void {
       },
       normalizeRelayUrl,
       onRelaysChanged: syncRelays,
+      onBroadcastRequested: async (): Promise<void> => {
+        const statusEl: HTMLElement | null = document.getElementById("broadcast-status");
+        const setStatus = (message: string, type: "info" | "error" | "success" = "info"): void => {
+          if (!statusEl) return;
+          statusEl.textContent = message;
+          if (type === "error") {
+            statusEl.className = "text-xs text-red-600";
+          } else if (type === "success") {
+            statusEl.className = "text-xs text-emerald-700";
+          } else {
+            statusEl.className = "text-xs text-gray-600";
+          }
+        };
+
+        try {
+          setStatus("Preparing broadcast...");
+          const result = await broadcastRecentPosts({
+            relays: getAllRelays(),
+            limit: 50,
+            onProgress: ({ total, completed }): void => {
+              setStatus(`Broadcasting ${completed}/${total} posts...`);
+            },
+          });
+          setStatus(`Broadcasted ${result.completed} posts to ${result.relays} relays.`, "success");
+
+          const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+          if (storedPubkey) {
+            await deleteTimeline("home", storedPubkey as PubkeyHex);
+          }
+          cachedHomeTimeline = null;
+        } catch (error: unknown) {
+          const message: string = error instanceof Error ? error.message : "Broadcast failed.";
+          setStatus(message, "error");
+        }
+      },
       profileSection,
       output,
     });
@@ -329,8 +366,8 @@ function handleRoute(): void {
       });
     } else if (npub.startsWith("npub")) {
       // Close any active WebSocket connections from previous timeline
-      // TODO: Race condition - closeAllWebSockets() may close sockets created for the new page
-      // if navigation happens quickly. Consider adding route scoping or socket ownership tracking.
+      // Note: Potential race condition if navigation happens quickly, but mitigated by
+      // isRouteActive() guards that prevent new subscriptions from continuing after route change
       closeAllWebSockets();
 
       // Stop background fetching when switching away from home timeline
@@ -431,6 +468,7 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
           activeWebSockets,
           activeTimeouts,
           isRouteActive,
+          storedPubkey as PubkeyHex,
         );
       }
       if (!isRouteActive()) {
@@ -565,10 +603,45 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
   if (!isRouteActive()) {
     return;
   }
-  // TODO: Redundant isRouteActive check - second check immediately after first is unnecessary
-  // and can cause confusion. Consider consolidating guards at key boundaries only.
-  if (!isRouteActive()) return; // Guard before DOM update
+
   renderLoadingState("Loading profile and posts...");
+  console.log("[App] Starting profile load for", npub);
+
+  let didTimeout: boolean = false;
+  const isStillActive = (): boolean => isRouteActive() && !didTimeout;
+
+  try {
+    await Promise.race([
+      startAppCore(npub, isStillActive),
+      new Promise<void>((_, reject) => {
+        setTimeout(() => {
+          didTimeout = true;
+          reject(new Error("Profile loading timed out"));
+        }, 15000);
+      }),
+    ]);
+  } catch (error) {
+    console.error("[App] Profile loading failed:", error);
+    if (!isRouteActive()) return;
+    if (output) {
+      const message: string = error instanceof Error ? error.message : "Unknown error";
+      output.innerHTML = `
+        <div class="text-center py-8">
+          <p class="text-red-600 mb-4">Failed to load profile.</p>
+          <p class="text-gray-600 text-sm">${message}</p>
+          <button onclick="window.location.reload()" class="mt-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+            Retry
+          </button>
+        </div>
+      `;
+    }
+  }
+}
+
+async function startAppCore(npub: Npub, isRouteActive: () => boolean): Promise<void> {
+  if (!isRouteActive()) {
+    return;
+  }
 
   let pubkeyHex: PubkeyHex;
   try {
@@ -584,7 +657,23 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
     throw e;
   }
 
-  profile = await fetchProfile(pubkeyHex, relays);
+  try {
+    profile = await Promise.race([
+      fetchProfile(pubkeyHex, relays),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 10000);
+      }),
+    ]);
+    if (!profile) {
+      console.warn("[App] Profile fetch timed out, continuing anyway");
+    } else {
+      console.log("[App] Profile fetched: success");
+    }
+  } catch (error) {
+    console.error("[App] Profile fetch failed:", error);
+    profile = null;
+  }
+
   if (!isRouteActive()) {
     return;
   }
@@ -592,13 +681,19 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
     if (!isRouteActive()) return; // Guard before DOM update
     renderProfile(pubkeyHex, npub, profile, profileSection);
   }
-  await setupFollowToggle(pubkeyHex, {
-    getRelays: (): string[] => relays,
-    publishEvent: publishEventToRelays,
-    onFollowListChanged: (): void => {
-      cachedHomeTimeline = null;
-    },
-  });
+
+  try {
+    await setupFollowToggle(pubkeyHex, {
+      getRelays: (): string[] => relays,
+      publishEvent: publishEventToRelays,
+      onFollowListChanged: (): void => {
+        cachedHomeTimeline = null;
+      },
+    });
+    console.log("[App] Follow toggle setup complete");
+  } catch (error) {
+    console.error("[App] Follow toggle setup failed:", error);
+  }
   if (!isRouteActive()) {
     return;
   }
@@ -608,7 +703,31 @@ async function startApp(npub: Npub, isRouteActive: () => boolean): Promise<void>
   untilTimestamp = Math.floor(Date.now() / 1000);
 
   if (output) {
-    await loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, isRouteActive);
+    try {
+      console.log("[App] Events loading started");
+      await loadEvents(
+        pubkeyHex,
+        profile,
+        relays,
+        limit,
+        untilTimestamp,
+        seenEventIds,
+        output,
+        connectingMsg,
+        isRouteActive,
+      );
+    } catch (error) {
+      console.error("[App] Events loading failed:", error);
+      if (!isRouteActive()) return;
+      if (output && output.innerHTML.includes("Loading")) {
+        output.innerHTML = `
+          <div class="text-center py-8">
+            <p class="text-red-600 mb-4">Failed to load posts.</p>
+            <p class="text-gray-600 text-sm">The profile loaded, but posts could not be fetched.</p>
+          </div>
+        `;
+      }
+    }
   }
   if (!isRouteActive()) {
     return;
@@ -758,7 +877,8 @@ function showNewPostsNotification(count: number): void {
 
         const followedPubkeys = cachedHomeTimeline?.followedPubkeys || [];
         if (followedPubkeys.length > 0 && output) {
-          await loadHomeTimeline(followedPubkeys, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts);
+          const isRouteActive = createRouteGuard();
+          await loadHomeTimeline(followedPubkeys, homeKinds, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, activeWebSockets, activeTimeouts, isRouteActive, storedPubkey as PubkeyHex);
         }
       }
     });

@@ -1,4 +1,5 @@
 import { finalizeEvent } from 'nostr-tools';
+import { storeEvent } from './db/index.js';
 import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
 interface ComposeOverlayOptions {
@@ -143,6 +144,7 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
       }
 
       await options.publishEvent(signedEvent, options.getRelays());
+      await storeEvent(signedEvent, { isHomeTimeline: false });
       textarea.value = "";
       statusEl.textContent = "Posted";
       closeOverlay();
