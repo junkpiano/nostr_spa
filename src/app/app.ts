@@ -12,6 +12,7 @@ import { broadcastRecentPosts } from "../features/broadcast/broadcast.js";
 import { loadSettingsPage } from "../features/settings/settings-page.js";
 import { setupFollowToggle, publishEventToRelays } from "../features/profile/follow.js";
 import { setupSearchBar } from "../common/search.js";
+import { isNip05Identifier, resolveNip05 } from "../common/nip05.js";
 import { setupNavigation, setActiveNav } from "../common/navigation.js";
 import { clearSessionPrivateKey, getSessionPrivateKey, setSessionPrivateKeyFromRaw, updateLogoutButton } from "../common/session.js";
 import { clearNotifications, loadNotificationsPage } from "../features/notifications/notifications.js";
@@ -363,6 +364,48 @@ function handleRoute(): void {
           }
         },
         isRouteActive,
+      });
+    } else if (isNip05Identifier(npub)) {
+      // NIP-05 identifier (e.g., user@domain.com)
+      closeAllWebSockets();
+      if (backgroundFetchInterval) {
+        clearInterval(backgroundFetchInterval);
+        backgroundFetchInterval = null;
+      }
+      const notification = document.getElementById("new-posts-notification");
+      if (notification) {
+        notification.remove();
+      }
+
+      const homeButton: HTMLElement | null = document.getElementById("nav-home");
+      const globalButton: HTMLElement | null = document.getElementById("nav-global");
+      const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
+      const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
+      const profileLink: HTMLElement | null = document.getElementById("nav-profile");
+      const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
+      setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, profileLink);
+      if (notificationsButton) {
+        notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
+        notificationsButton.classList.add("text-gray-700");
+      }
+
+      renderLoadingState("Resolving NIP-05 identifier...", npub);
+
+      resolveNip05(npub).then((pubkeyHex: PubkeyHex | null): void => {
+        if (!isRouteActive()) return;
+        if (pubkeyHex) {
+          const resolvedNpub: string = nip19.npubEncode(pubkeyHex);
+          startApp(resolvedNpub as Npub, isRouteActive);
+        } else {
+          if (output) {
+            output.innerHTML = `
+              <div class="text-center py-8">
+                <p class="text-red-600 mb-4">Could not resolve NIP-05 identifier.</p>
+                <p class="text-gray-600 text-sm">"${npub}" could not be found. Check the identifier and try again.</p>
+              </div>
+            `;
+          }
+        }
       });
     } else if (npub.startsWith("npub")) {
       // Close any active WebSocket connections from previous timeline
