@@ -33,14 +33,11 @@ export async function setupFollowToggle(
   const button: HTMLButtonElement | null = document.getElementById('follow-toggle') as HTMLButtonElement;
   if (!button) return;
 
-  const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
-  const hasPrivateKey: boolean = Boolean(getSessionPrivateKey());
-  if (!hasExtension && !hasPrivateKey) {
-    button.textContent = 'Follow (sign-in required)';
-    button.disabled = true;
-    button.classList.add('opacity-60', 'cursor-not-allowed');
-    return;
-  }
+  const hasSigningCapability = (): boolean => {
+    const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
+    const hasPrivateKey: boolean = Boolean(getSessionPrivateKey());
+    return hasExtension || hasPrivateKey;
+  };
 
   let isFollowing: boolean = false;
   let followList: PubkeyHex[] = [];
@@ -53,6 +50,13 @@ export async function setupFollowToggle(
   }
 
   const updateButton = (): void => {
+    if (!hasSigningCapability()) {
+      button.textContent = 'Follow (sign-in required)';
+      button.className =
+        'bg-slate-500 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow';
+      return;
+    }
+
     if (isFollowing) {
       button.textContent = 'Unfollow';
       button.className =
@@ -67,6 +71,11 @@ export async function setupFollowToggle(
   updateButton();
 
   button.addEventListener('click', async (): Promise<void> => {
+    if (!hasSigningCapability()) {
+      alert('Sign-in required to follow. Please log in with extension or private key.');
+      return;
+    }
+
     button.disabled = true;
     button.classList.add('opacity-60', 'cursor-not-allowed');
 
