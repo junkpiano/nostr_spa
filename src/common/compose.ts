@@ -21,6 +21,7 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
   if (!overlay || !backdrop || !closeBtn || !textarea || !submitBtn || !statusEl) {
     return;
   }
+  let isSubmitting: boolean = false;
 
   const openOverlay = (): void => {
     overlay.style.display = "";
@@ -43,7 +44,7 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
       statusEl.textContent = "Sign-in required to post";
     }
 
-    if (!hasExtension && !hasPrivateKey) {
+    if (isSubmitting) {
       submitBtn.disabled = true;
       submitBtn.classList.add("opacity-60", "cursor-not-allowed");
     } else {
@@ -114,8 +115,17 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
       return;
     }
 
-    submitBtn.disabled = true;
-    submitBtn.classList.add("opacity-60", "cursor-not-allowed");
+    const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
+    const privateKey: Uint8Array | null = options.getSessionPrivateKey();
+    if (!hasExtension && !privateKey) {
+      statusEl.textContent = "Sign-in required to post";
+      alert("Sign-in required to post. Please log in with extension or private key.");
+      refreshStatus();
+      return;
+    }
+
+    isSubmitting = true;
+    refreshStatus();
     statusEl.textContent = "Posting...";
 
     try {
@@ -133,10 +143,9 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
       };
 
       let signedEvent: NostrEvent;
-      if ((window as any).nostr && (window as any).nostr.signEvent) {
+      if (hasExtension) {
         signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
       } else {
-        const privateKey: Uint8Array | null = options.getSessionPrivateKey();
         if (!privateKey) {
           throw new Error("No signing method available");
         }
@@ -154,6 +163,7 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
       statusEl.textContent = "Failed to post";
       alert("Failed to post. Please try again.");
     } finally {
+      isSubmitting = false;
       refreshStatus();
     }
   });
