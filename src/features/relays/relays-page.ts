@@ -52,7 +52,7 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
             class="border border-gray-300 rounded-lg px-4 py-2 flex-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
           <button id="relay-add"
             class="bg-gradient-to-r from-slate-800 via-indigo-900 to-purple-950 hover:from-slate-900 hover:via-indigo-950 hover:to-purple-950 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-lg">
-            Add Relay
+            +
           </button>
         </div>
         <p id="relay-error" class="text-sm text-red-600"></p>
@@ -132,6 +132,8 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
       const upBtn: HTMLButtonElement = document.createElement("button");
       upBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors";
       upBtn.textContent = "↑";
+      upBtn.title = "Move up";
+      upBtn.setAttribute("aria-label", "Move relay up");
       upBtn.disabled = index === 0;
       if (upBtn.disabled) {
         upBtn.classList.add("opacity-60", "cursor-not-allowed");
@@ -154,6 +156,8 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
       const downBtn: HTMLButtonElement = document.createElement("button");
       downBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors";
       downBtn.textContent = "↓";
+      downBtn.title = "Move down";
+      downBtn.setAttribute("aria-label", "Move relay down");
       downBtn.disabled = index === currentRelays.length - 1;
       if (downBtn.disabled) {
         downBtn.classList.add("opacity-60", "cursor-not-allowed");
@@ -175,7 +179,9 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
 
       const editBtn: HTMLButtonElement = document.createElement("button");
       editBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors";
-      editBtn.textContent = "Edit";
+      editBtn.textContent = "✎";
+      editBtn.title = "Edit relay";
+      editBtn.setAttribute("aria-label", "Edit relay");
       editBtn.addEventListener("click", (): void => {
         clearError();
         const updatedRaw: string | null = window.prompt("Edit relay URL:", relayUrl);
@@ -198,7 +204,9 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
 
       const deleteBtn: HTMLButtonElement = document.createElement("button");
       deleteBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors";
-      deleteBtn.textContent = "Delete";
+      deleteBtn.textContent = "🗑";
+      deleteBtn.title = "Delete relay";
+      deleteBtn.setAttribute("aria-label", "Delete relay");
       deleteBtn.addEventListener("click", (): void => {
         clearError();
         currentRelays = currentRelays.filter((_: string, i: number): boolean => i !== index);
@@ -247,6 +255,8 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
   }
 
   if (relayAddButton) {
+    relayAddButton.setAttribute("title", "Add relay");
+    relayAddButton.setAttribute("aria-label", "Add relay");
     relayAddButton.addEventListener("click", (): void => {
       clearError();
       if (!relayInput) return;
