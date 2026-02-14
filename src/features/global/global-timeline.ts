@@ -38,7 +38,10 @@ export async function loadGlobalTimeline(
     return;
   }
   const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
-  let clearedPlaceholder: boolean = false;
+  // If we're paginating ("Load more"), the output already has rendered events.
+  // Never clear it in that case; only clear placeholder/loading content.
+  let clearedPlaceholder: boolean =
+    output.querySelectorAll('.event-container').length > 0;
   const bufferedEvents: NostrEvent[] = [];
   const renderedEventIds: Set<string> = new Set();
   let relayConnectionCount: number = 0;

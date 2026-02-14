@@ -1,7 +1,18 @@
 import { nip19 } from 'nostr-tools';
-import type { NostrProfile, Npub, PubkeyHex } from '../../types/nostr';
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  PubkeyHex,
+} from '../../types/nostr';
 import { setupComposeOverlay } from '../common/compose.js';
-import { deleteTimeline } from '../common/db/index.js';
+import {
+  deleteTimeline,
+  getCachedTimeline,
+  getProfile as getCachedProfile,
+  getTimelineNewestTimestamp,
+} from '../common/db/index.js';
+import { renderEvent } from '../common/event-render.js';
 import { setActiveNav, setupNavigation } from '../common/navigation.js';
 import { isNip05Identifier, resolveNip05 } from '../common/nip05.js';
 import { setupImageOverlay } from '../common/overlays.js';
@@ -64,6 +75,10 @@ type AppHistoryState = {
   __nostrSpa?: true;
   scrollX?: number;
   scrollY?: number;
+  timeline?: {
+    type: 'home' | 'global';
+    count: number;
+  };
 };
 
 // Cache for home timeline
@@ -128,6 +143,23 @@ function getCurrentHistoryStateObject(): Record<string, unknown> {
   return {};
 }
 
+function getCurrentTimelineHistoryHint():
+  | AppHistoryState['timeline']
+  | undefined {
+  const path: string = window.location.pathname;
+  if (path !== '/home' && path !== '/global') {
+    return undefined;
+  }
+  const count: number = document.querySelectorAll('.event-container').length;
+  if (count <= 0) {
+    return undefined;
+  }
+  return {
+    type: path === '/home' ? 'home' : 'global',
+    count,
+  };
+}
+
 function saveScrollToHistoryState(): void {
   const base: Record<string, unknown> = getCurrentHistoryStateObject();
   const nextState: AppHistoryState & Record<string, unknown> = {
@@ -136,6 +168,15 @@ function saveScrollToHistoryState(): void {
     scrollX: window.scrollX,
     scrollY: window.scrollY,
   };
+  const timelineHint: AppHistoryState['timeline'] | undefined =
+    getCurrentTimelineHistoryHint();
+  if (timelineHint) {
+    nextState.timeline = timelineHint;
+  } else {
+    // With exactOptionalPropertyTypes, explicitly writing `timeline: undefined`
+    // is not the same as omitting the property.
+    delete (nextState as any).timeline;
+  }
   const url: string =
     window.location.pathname + window.location.search + window.location.hash;
   window.history.replaceState(nextState, '', url);
@@ -179,6 +220,115 @@ async function restoreScrollFromState(state: unknown): Promise<void> {
       window.setTimeout(resolve, 60);
     });
   }
+}
+
+function getRestoreTimelineCount(
+  state: unknown,
+  expectedType: 'home' | 'global',
+): number {
+  if (!state || typeof state !== 'object') {
+    return 0;
+  }
+  const s: any = state;
+  const timeline = s?.timeline;
+  if (!timeline || typeof timeline !== 'object') {
+    return 0;
+  }
+  if (timeline.type !== expectedType) {
+    return 0;
+  }
+  const count: number = typeof timeline.count === 'number' ? timeline.count : 0;
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+}
+
+function replaceLoadMoreButtonHandler(onClick: () => Promise<void>): void {
+  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
+  if (!loadMoreBtn || !loadMoreBtn.parentNode) {
+    return;
+  }
+  const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
+    true,
+  ) as HTMLElement;
+  loadMoreBtn.parentNode.replaceChild(newLoadMoreBtn, loadMoreBtn);
+  newLoadMoreBtn.addEventListener('click', (): void => {
+    void onClick();
+  });
+}
+
+async function restoreTimelineFromCache(params: {
+  type: 'home' | 'global';
+  userPubkey?: PubkeyHex | undefined;
+  desiredCount: number;
+  isRouteActive: () => boolean;
+}): Promise<{
+  restored: boolean;
+  oldestTimestamp: number;
+  newestTimestamp: number;
+}> {
+  if (!output || !params.isRouteActive()) {
+    return { restored: false, oldestTimestamp: 0, newestTimestamp: 0 };
+  }
+
+  const desiredCount: number = Math.max(1, Math.min(params.desiredCount, 500));
+  const cached = await getCachedTimeline(params.type, params.userPubkey, {
+    limit: desiredCount,
+  });
+  if (!params.isRouteActive()) {
+    return { restored: false, oldestTimestamp: 0, newestTimestamp: 0 };
+  }
+  if (!cached.hasCache || cached.events.length === 0) {
+    return { restored: false, oldestTimestamp: 0, newestTimestamp: 0 };
+  }
+
+  // Render cached events (no relay fetch). This is used for browser back/forward restore.
+  output.innerHTML = '';
+  seenEventIds.clear();
+
+  const uniquePubkeys: PubkeyHex[] = Array.from(
+    new Set(cached.events.map((e: NostrEvent) => e.pubkey as PubkeyHex)),
+  );
+  const profiles: Array<NostrProfile | null> = await Promise.all(
+    uniquePubkeys.map(async (pk: PubkeyHex): Promise<NostrProfile | null> => {
+      try {
+        return await getCachedProfile(pk);
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const profileMap: Map<PubkeyHex, NostrProfile | null> = new Map(
+    uniquePubkeys.map((pk: PubkeyHex, i: number) => [pk, profiles[i] ?? null]),
+  );
+
+  for (const event of cached.events) {
+    if (!params.isRouteActive()) {
+      return { restored: false, oldestTimestamp: 0, newestTimestamp: 0 };
+    }
+    seenEventIds.add(event.id);
+    const profile: NostrProfile | null =
+      profileMap.get(event.pubkey as PubkeyHex) || null;
+    const npubStr: Npub = nip19.npubEncode(event.pubkey);
+    renderEvent(event, profile, npubStr, event.pubkey, output);
+  }
+
+  if (connectingMsg) {
+    connectingMsg.style.display = 'none';
+  }
+
+  const loadMoreBtn: HTMLButtonElement | null = document.getElementById(
+    'load-more',
+  ) as HTMLButtonElement | null;
+  if (loadMoreBtn) {
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    loadMoreBtn.style.display = 'inline';
+  }
+
+  return {
+    restored: true,
+    oldestTimestamp: cached.oldestTimestamp,
+    newestTimestamp: cached.newestTimestamp,
+  };
 }
 
 function syncRelays(): void {
@@ -398,9 +548,9 @@ function handleRoute(scrollRestoreState?: unknown): void {
       replaceAppHistoryPath('/home');
       await loadHomePage(isRouteActive);
     } else if (path === '/home') {
-      await loadHomePage(isRouteActive);
+      await loadHomePage(isRouteActive, scrollRestoreState);
     } else if (path === '/global') {
-      await loadGlobalPage(isRouteActive);
+      await loadGlobalPage(isRouteActive, scrollRestoreState);
     } else if (path === '/notifications') {
       const homeButton: HTMLElement | null =
         document.getElementById('nav-home');
@@ -741,7 +891,10 @@ function handleRoute(scrollRestoreState?: unknown): void {
 }
 
 // Load home page
-async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
+async function loadHomePage(
+  isRouteActive: () => boolean,
+  historyState?: unknown,
+): Promise<void> {
   if (!isRouteActive()) {
     return;
   }
@@ -795,7 +948,60 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
       profileSection.className = '';
     }
 
-    // Check if we have a cached timeline
+    // If this navigation came from browser back/forward, restore the same
+    // cached events first so scroll restoration lands on the same content.
+    const restoreCount: number = getRestoreTimelineCount(historyState, 'home');
+    if (restoreCount > 0) {
+      const restored = await restoreTimelineFromCache({
+        type: 'home',
+        userPubkey: storedPubkey as PubkeyHex,
+        desiredCount: restoreCount,
+        isRouteActive,
+      });
+      if (restored.restored && isRouteActive()) {
+        untilTimestamp =
+          restored.oldestTimestamp || Math.floor(Date.now() / 1000);
+        newestEventTimestamp =
+          restored.newestTimestamp || Math.floor(Date.now() / 1000);
+
+        // Keep pagination working when restoring from cache.
+        replaceLoadMoreButtonHandler(async (): Promise<void> => {
+          const followedPubkeys: PubkeyHex[] =
+            (cachedHomeTimeline?.followedPubkeys as PubkeyHex[] | undefined) ||
+            [];
+          if (followedPubkeys.length === 0 || !output) {
+            return;
+          }
+          const routeGuard: () => boolean = createRouteGuard();
+          await loadHomeTimeline(
+            followedPubkeys,
+            homeKinds,
+            relays,
+            limit,
+            untilTimestamp,
+            seenEventIds,
+            output,
+            connectingMsg,
+            activeWebSockets,
+            activeTimeouts,
+            routeGuard,
+            storedPubkey as PubkeyHex,
+          );
+        });
+
+        if (
+          !backgroundFetchInterval &&
+          cachedHomeTimeline?.followedPubkeys?.length
+        ) {
+          startBackgroundFetch(
+            cachedHomeTimeline.followedPubkeys as PubkeyHex[],
+          );
+        }
+        return;
+      }
+    }
+
+    // Check if we have a cached follow list
     if (cachedHomeTimeline && cachedHomeTimeline.followedPubkeys.length > 0) {
       // Use cached follow list, reload timeline
       console.log('Using cached follow list, reloading home timeline');
@@ -824,6 +1030,19 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
       }
       if (!isRouteActive()) {
         return;
+      }
+
+      // Align background "since" cursor to newest cached timeline event.
+      try {
+        const newest: number = await getTimelineNewestTimestamp(
+          'home',
+          storedPubkey as PubkeyHex,
+        );
+        if (Number.isFinite(newest) && newest > 0) {
+          newestEventTimestamp = newest;
+        }
+      } catch {
+        // Best-effort only.
       }
 
       // Restart background fetching
@@ -870,6 +1089,19 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
       if (!isRouteActive()) {
         return;
       }
+
+      // Align background "since" cursor to newest cached timeline event.
+      try {
+        const newest: number = await getTimelineNewestTimestamp(
+          'home',
+          storedPubkey as PubkeyHex,
+        );
+        if (Number.isFinite(newest) && newest > 0) {
+          newestEventTimestamp = newest;
+        }
+      } catch {
+        // Best-effort only.
+      }
     }
   } else {
     // User not logged in, show welcome screen
@@ -886,7 +1118,10 @@ async function loadHomePage(isRouteActive: () => boolean): Promise<void> {
 }
 
 // Load global page
-async function loadGlobalPage(isRouteActive: () => boolean): Promise<void> {
+async function loadGlobalPage(
+  isRouteActive: () => boolean,
+  historyState?: unknown,
+): Promise<void> {
   if (!isRouteActive()) {
     return;
   }
@@ -951,6 +1186,35 @@ async function loadGlobalPage(isRouteActive: () => boolean): Promise<void> {
 
   seenEventIds.clear();
   untilTimestamp = Math.floor(Date.now() / 1000);
+  const restoreCount: number = getRestoreTimelineCount(historyState, 'global');
+  if (restoreCount > 0) {
+    const restored = await restoreTimelineFromCache({
+      type: 'global',
+      desiredCount: restoreCount,
+      isRouteActive,
+    });
+    if (restored.restored && isRouteActive()) {
+      untilTimestamp =
+        restored.oldestTimestamp || Math.floor(Date.now() / 1000);
+      replaceLoadMoreButtonHandler(async (): Promise<void> => {
+        if (!output) return;
+        const routeGuard: () => boolean = createRouteGuard();
+        await loadGlobalTimeline(
+          relays,
+          limit,
+          untilTimestamp,
+          seenEventIds,
+          output,
+          connectingMsg,
+          activeWebSockets,
+          activeTimeouts,
+          routeGuard,
+        );
+      });
+      return;
+    }
+  }
+
   if (output) {
     await loadGlobalTimeline(
       relays,
@@ -1165,7 +1429,8 @@ async function fetchNewPosts(followedPubkeys: PubkeyHex[]): Promise<void> {
   if (!output || followedPubkeys.length === 0) return;
 
   const newEvents: any[] = [];
-  const since = newestEventTimestamp;
+  // Nostr filter `since` is inclusive; +1 avoids repeatedly refetching the same newest timestamp.
+  const since = newestEventTimestamp + 1;
 
   for (const relayUrl of relays) {
     try {
