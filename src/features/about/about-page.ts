@@ -1,4 +1,4 @@
-import type { SetActiveNavFn } from "../../common/types.js";
+import type { SetActiveNavFn } from '../../common/types.js';
 
 interface AboutPageOptions {
   closeAllWebSockets: () => void;
@@ -14,27 +14,39 @@ export function loadAboutPage(options: AboutPageOptions): void {
   options.stopBackgroundFetch();
   options.clearNotification();
 
-  const homeButton: HTMLElement | null = document.getElementById("nav-home");
-  const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
-  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
-  const aboutButton: HTMLElement | null = document.getElementById("nav-about");
-  options.setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, null);
+  const homeButton: HTMLElement | null = document.getElementById('nav-home');
+  const globalButton: HTMLElement | null =
+    document.getElementById('nav-global');
+  const relaysButton: HTMLElement | null =
+    document.getElementById('nav-relays');
+  const profileLink: HTMLElement | null =
+    document.getElementById('nav-profile');
+  const settingsButton: HTMLElement | null =
+    document.getElementById('nav-settings');
+  const aboutButton: HTMLElement | null = document.getElementById('nav-about');
+  options.setActiveNav(
+    homeButton,
+    globalButton,
+    relaysButton,
+    profileLink,
+    settingsButton,
+    null,
+  );
   if (aboutButton) {
-    aboutButton.classList.remove("text-gray-700");
-    aboutButton.classList.add("bg-indigo-100", "text-indigo-700");
+    aboutButton.classList.remove('text-gray-700');
+    aboutButton.classList.add('bg-indigo-100', 'text-indigo-700');
   }
 
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+  const postsHeader: HTMLElement | null =
+    document.getElementById('posts-header');
   if (postsHeader) {
-    postsHeader.textContent = "About noxtr";
-    postsHeader.style.display = "";
+    postsHeader.textContent = 'About noxtr';
+    postsHeader.style.display = '';
   }
 
   if (options.profileSection) {
-    options.profileSection.innerHTML = "";
-    options.profileSection.className = "";
+    options.profileSection.innerHTML = '';
+    options.profileSection.className = '';
   }
 
   if (!options.output) {

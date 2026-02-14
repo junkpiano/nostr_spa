@@ -1,5 +1,5 @@
-import type { NostrEvent } from "../../../types/nostr.js";
-import { storeEvents as batchStoreEvents } from "./events-store.js";
+import type { NostrEvent } from '../../../types/nostr.js';
+import { storeEvents as batchStoreEvents } from './events-store.js';
 
 interface QueuedEvent {
   event: NostrEvent;
@@ -30,10 +30,7 @@ class EventWriter {
   /**
    * Adds multiple events to the write queue
    */
-  public queueEvents(
-    events: NostrEvent[],
-    isHomeTimeline = false
-  ): void {
+  public queueEvents(events: NostrEvent[], isHomeTimeline = false): void {
     for (const event of events) {
       this.queue.push({ event, isHomeTimeline });
     }
@@ -94,7 +91,7 @@ class EventWriter {
         console.log(`[EventWriter] Stored ${regularEvents.length} events`);
       }
     } catch (error) {
-      console.error("[EventWriter] Failed to flush events:", error);
+      console.error('[EventWriter] Failed to flush events:', error);
       // Don't re-queue failed events to avoid infinite loops
     } finally {
       this.isProcessing = false;
@@ -131,10 +128,7 @@ export const eventWriter = new EventWriter();
 /**
  * Convenience function to queue a single event
  */
-export function writeEvent(
-  event: NostrEvent,
-  isHomeTimeline = false
-): void {
+export function writeEvent(event: NostrEvent, isHomeTimeline = false): void {
   eventWriter.queueEvent(event, isHomeTimeline);
 }
 
@@ -143,7 +137,7 @@ export function writeEvent(
  */
 export function writeEvents(
   events: NostrEvent[],
-  isHomeTimeline = false
+  isHomeTimeline = false,
 ): void {
   eventWriter.queueEvents(events, isHomeTimeline);
 }

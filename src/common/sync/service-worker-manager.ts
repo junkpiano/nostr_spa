@@ -1,4 +1,4 @@
-import type { PubkeyHex } from "../../../types/nostr.js";
+import type { PubkeyHex } from '../../../types/nostr.js';
 
 let serviceWorkerRegistration: ServiceWorkerRegistration | null = null;
 let syncConfig: {
@@ -23,52 +23,64 @@ export interface ServiceWorkerManager {
  * Registers the service worker
  */
 export async function registerServiceWorker(): Promise<boolean> {
-  if (!("serviceWorker" in navigator)) {
-    console.warn("[ServiceWorkerManager] Service workers not supported");
+  if (!('serviceWorker' in navigator)) {
+    console.warn('[ServiceWorkerManager] Service workers not supported');
     return false;
   }
 
   try {
     const registration = await navigator.serviceWorker.register(
-      "/service-worker.js",
+      '/service-worker.js',
       {
-        scope: "/",
-      }
+        scope: '/',
+      },
     );
 
     serviceWorkerRegistration = registration;
 
-    console.log("[ServiceWorkerManager] Service worker registered:", registration.scope);
+    console.log(
+      '[ServiceWorkerManager] Service worker registered:',
+      registration.scope,
+    );
 
     // Listen for updates
-    registration.addEventListener("updatefound", () => {
+    registration.addEventListener('updatefound', () => {
       const newWorker = registration.installing;
       if (newWorker) {
-        console.log("[ServiceWorkerManager] New service worker installing");
-        newWorker.addEventListener("statechange", () => {
-          console.log("[ServiceWorkerManager] Service worker state:", newWorker.state);
+        console.log('[ServiceWorkerManager] New service worker installing');
+        newWorker.addEventListener('statechange', () => {
+          console.log(
+            '[ServiceWorkerManager] Service worker state:',
+            newWorker.state,
+          );
         });
       }
     });
 
     // Listen for messages from service worker
-    navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
+    navigator.serviceWorker.addEventListener(
+      'message',
+      handleServiceWorkerMessage,
+    );
 
     // Check for waiting service worker
     if (registration.waiting) {
-      console.log("[ServiceWorkerManager] Service worker waiting to activate");
+      console.log('[ServiceWorkerManager] Service worker waiting to activate');
     }
 
     // Check for active service worker
     if (registration.active) {
-      console.log("[ServiceWorkerManager] Service worker active");
+      console.log('[ServiceWorkerManager] Service worker active');
       // Ping to verify communication
-      sendMessage({ type: "PING" });
+      sendMessage({ type: 'PING' });
     }
 
     return true;
   } catch (error) {
-    console.error("[ServiceWorkerManager] Failed to register service worker:", error);
+    console.error(
+      '[ServiceWorkerManager] Failed to register service worker:',
+      error,
+    );
     return false;
   }
 }
@@ -82,7 +94,7 @@ export async function startPeriodicSync(config: {
   syncGlobal?: boolean;
 }): Promise<void> {
   if (!serviceWorkerRegistration) {
-    console.warn("[ServiceWorkerManager] No service worker registered");
+    console.warn('[ServiceWorkerManager] No service worker registered');
     return;
   }
 
@@ -90,11 +102,11 @@ export async function startPeriodicSync(config: {
 
   // Send sync config to service worker
   await sendMessage({
-    type: "START_PERIODIC_SYNC",
+    type: 'START_PERIODIC_SYNC',
     payload: config,
   });
 
-  console.log("[ServiceWorkerManager] Started periodic sync");
+  console.log('[ServiceWorkerManager] Started periodic sync');
 }
 
 /**
@@ -108,10 +120,10 @@ export async function stopPeriodicSync(): Promise<void> {
   syncConfig = null;
 
   await sendMessage({
-    type: "STOP_PERIODIC_SYNC",
+    type: 'STOP_PERIODIC_SYNC',
   });
 
-  console.log("[ServiceWorkerManager] Stopped periodic sync");
+  console.log('[ServiceWorkerManager] Stopped periodic sync');
 }
 
 /**
@@ -120,7 +132,7 @@ export async function stopPeriodicSync(): Promise<void> {
 function sendMessage(message: any): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!serviceWorkerRegistration?.active) {
-      reject(new Error("No active service worker"));
+      reject(new Error('No active service worker'));
       return;
     }
 
@@ -130,7 +142,9 @@ function sendMessage(message: any): Promise<void> {
       resolve(event.data);
     };
 
-    serviceWorkerRegistration.active.postMessage(message, [messageChannel.port2]);
+    serviceWorkerRegistration.active.postMessage(message, [
+      messageChannel.port2,
+    ]);
   });
 }
 
@@ -138,24 +152,30 @@ function sendMessage(message: any): Promise<void> {
  * Handles messages from the service worker
  */
 function handleServiceWorkerMessage(event: MessageEvent): void {
-  console.log("[ServiceWorkerManager] Message from service worker:", event.data);
+  console.log(
+    '[ServiceWorkerManager] Message from service worker:',
+    event.data,
+  );
 
   const { type, payload } = event.data;
 
-  if (type === "NEW_EVENTS") {
+  if (type === 'NEW_EVENTS') {
     // Dispatch custom event for the app to handle
     window.dispatchEvent(
-      new CustomEvent("sw-new-events", {
+      new CustomEvent('sw-new-events', {
         detail: {
           timelineType: event.data.timelineType,
           count: event.data.count,
         },
-      })
+      }),
     );
-  } else if (type === "PONG") {
-    console.log("[ServiceWorkerManager] Pong received, version:", event.data.version);
-  } else if (type === "SYNC_RESULT") {
-    console.log("[ServiceWorkerManager] Sync result:", payload);
+  } else if (type === 'PONG') {
+    console.log(
+      '[ServiceWorkerManager] Pong received, version:',
+      event.data.version,
+    );
+  } else if (type === 'SYNC_RESULT') {
+    console.log('[ServiceWorkerManager] Sync result:', payload);
   }
 }
 
@@ -163,7 +183,7 @@ function handleServiceWorkerMessage(event: MessageEvent): void {
  * Checks if service workers are supported
  */
 export function isServiceWorkerSupported(): boolean {
-  return "serviceWorker" in navigator;
+  return 'serviceWorker' in navigator;
 }
 
 /**
@@ -186,11 +206,14 @@ export async function unregisterServiceWorker(): Promise<boolean> {
     if (success) {
       serviceWorkerRegistration = null;
       syncConfig = null;
-      console.log("[ServiceWorkerManager] Service worker unregistered");
+      console.log('[ServiceWorkerManager] Service worker unregistered');
     }
     return success;
   } catch (error) {
-    console.error("[ServiceWorkerManager] Failed to unregister service worker:", error);
+    console.error(
+      '[ServiceWorkerManager] Failed to unregister service worker:',
+      error,
+    );
     return false;
   }
 }

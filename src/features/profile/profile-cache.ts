@@ -1,11 +1,11 @@
-import type { NostrProfile, PubkeyHex } from "../../../types/nostr";
+import type { NostrProfile, PubkeyHex } from '../../../types/nostr';
 
 interface ProfileCacheStore {
   order: PubkeyHex[];
   items: Record<PubkeyHex, NostrProfile>;
 }
 
-const PROFILE_CACHE_KEY: string = "nostr_profile_cache_v1";
+const PROFILE_CACHE_KEY: string = 'nostr_profile_cache_v1';
 const PROFILE_CACHE_LIMIT: number = 100;
 
 function readStore(): ProfileCacheStore {
@@ -18,9 +18,9 @@ function readStore(): ProfileCacheStore {
     const parsed: unknown = JSON.parse(raw);
     if (
       !parsed ||
-      typeof parsed !== "object" ||
+      typeof parsed !== 'object' ||
       !Array.isArray((parsed as ProfileCacheStore).order) ||
-      typeof (parsed as ProfileCacheStore).items !== "object"
+      typeof (parsed as ProfileCacheStore).items !== 'object'
     ) {
       return { order: [], items: {} };
     }
@@ -35,7 +35,7 @@ function writeStore(store: ProfileCacheStore): void {
   try {
     localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(store));
   } catch (error: unknown) {
-    console.warn("Failed to persist profile cache:", error);
+    console.warn('Failed to persist profile cache:', error);
   }
 }
 
@@ -53,7 +53,10 @@ export function getCachedProfile(pubkey: PubkeyHex): NostrProfile | null {
   return profile;
 }
 
-export function setCachedProfile(pubkey: PubkeyHex, profile: NostrProfile): void {
+export function setCachedProfile(
+  pubkey: PubkeyHex,
+  profile: NostrProfile,
+): void {
   const store: ProfileCacheStore = readStore();
 
   store.items[pubkey] = profile;
@@ -77,7 +80,8 @@ export function getProfileCacheStats(): { count: number; bytes: number } {
     if (!raw) {
       return { count: 0, bytes: 0 };
     }
-    const encoder: TextEncoder | null = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+    const encoder: TextEncoder | null =
+      typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
     const bytes: number = encoder ? encoder.encode(raw).length : raw.length;
     const store: ProfileCacheStore = readStore();
     return { count: store.order.length, bytes };

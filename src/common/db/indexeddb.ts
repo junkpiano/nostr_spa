@@ -4,7 +4,7 @@ import {
   STORE_NAMES,
   type StoreName,
   type TransactionMode,
-} from "./types.js";
+} from './types.js';
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -17,8 +17,8 @@ export async function openDb(): Promise<IDBDatabase> {
   }
 
   return new Promise<IDBDatabase>((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      reject(new Error("IndexedDB not available"));
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB not available'));
       return;
     }
 
@@ -28,66 +28,74 @@ export async function openDb(): Promise<IDBDatabase> {
       const db = request.result;
       const oldVersion = event.oldVersion;
 
-      console.log(`[IndexedDB] Upgrading from version ${oldVersion} to ${DB_VERSION}`);
+      console.log(
+        `[IndexedDB] Upgrading from version ${oldVersion} to ${DB_VERSION}`,
+      );
 
       // Create events store
       if (!db.objectStoreNames.contains(STORE_NAMES.EVENTS)) {
         const eventsStore = db.createObjectStore(STORE_NAMES.EVENTS, {
-          keyPath: "id",
+          keyPath: 'id',
         });
-        eventsStore.createIndex("pubkey", "pubkey", { unique: false });
-        eventsStore.createIndex("kind", "kind", { unique: false });
-        eventsStore.createIndex("created_at", "created_at", { unique: false });
-        eventsStore.createIndex("storedAt", "storedAt", { unique: false });
-        eventsStore.createIndex("pubkey_created_at", ["pubkey", "created_at"], {
+        eventsStore.createIndex('pubkey', 'pubkey', { unique: false });
+        eventsStore.createIndex('kind', 'kind', { unique: false });
+        eventsStore.createIndex('created_at', 'created_at', { unique: false });
+        eventsStore.createIndex('storedAt', 'storedAt', { unique: false });
+        eventsStore.createIndex('pubkey_created_at', ['pubkey', 'created_at'], {
           unique: false,
         });
-        eventsStore.createIndex("isHomeTimeline", "isHomeTimeline", { unique: false });
-        console.log("[IndexedDB] Created events store");
+        eventsStore.createIndex('isHomeTimeline', 'isHomeTimeline', {
+          unique: false,
+        });
+        console.log('[IndexedDB] Created events store');
       }
 
       // Create profiles store
       if (!db.objectStoreNames.contains(STORE_NAMES.PROFILES)) {
         const profilesStore = db.createObjectStore(STORE_NAMES.PROFILES, {
-          keyPath: "pubkey",
+          keyPath: 'pubkey',
         });
-        profilesStore.createIndex("storedAt", "storedAt", { unique: false });
-        profilesStore.createIndex("accessedAt", "accessedAt", { unique: false });
-        console.log("[IndexedDB] Created profiles store");
+        profilesStore.createIndex('storedAt', 'storedAt', { unique: false });
+        profilesStore.createIndex('accessedAt', 'accessedAt', {
+          unique: false,
+        });
+        console.log('[IndexedDB] Created profiles store');
       }
 
       // Create timelines store
       if (!db.objectStoreNames.contains(STORE_NAMES.TIMELINES)) {
         const timelinesStore = db.createObjectStore(STORE_NAMES.TIMELINES, {
-          keyPath: "key",
+          keyPath: 'key',
         });
-        timelinesStore.createIndex("type", "type", { unique: false });
-        timelinesStore.createIndex("updatedAt", "updatedAt", { unique: false });
-        console.log("[IndexedDB] Created timelines store");
+        timelinesStore.createIndex('type', 'type', { unique: false });
+        timelinesStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+        console.log('[IndexedDB] Created timelines store');
       }
 
       // Create metadata store
       if (!db.objectStoreNames.contains(STORE_NAMES.METADATA)) {
         db.createObjectStore(STORE_NAMES.METADATA, {
-          keyPath: "key",
+          keyPath: 'key',
         });
-        console.log("[IndexedDB] Created metadata store");
+        console.log('[IndexedDB] Created metadata store');
       }
     };
 
     request.onsuccess = (): void => {
       dbInstance = request.result;
-      console.log("[IndexedDB] Database opened successfully");
+      console.log('[IndexedDB] Database opened successfully');
       resolve(dbInstance);
     };
 
     request.onerror = (): void => {
-      console.error("[IndexedDB] Failed to open database", request.error);
-      reject(request.error || new Error("Failed to open IndexedDB"));
+      console.error('[IndexedDB] Failed to open database', request.error);
+      reject(request.error || new Error('Failed to open IndexedDB'));
     };
 
     request.onblocked = (): void => {
-      console.warn("[IndexedDB] Database upgrade blocked by another connection");
+      console.warn(
+        '[IndexedDB] Database upgrade blocked by another connection',
+      );
     };
   });
 }
@@ -99,7 +107,7 @@ export function closeDb(): void {
   if (dbInstance) {
     dbInstance.close();
     dbInstance = null;
-    console.log("[IndexedDB] Database closed");
+    console.log('[IndexedDB] Database closed');
   }
 }
 
@@ -108,7 +116,7 @@ export function closeDb(): void {
  */
 export async function createTransaction(
   storeNames: StoreName | StoreName[],
-  mode: TransactionMode = "readonly"
+  mode: TransactionMode = 'readonly',
 ): Promise<IDBTransaction> {
   const db = await openDb();
   const names = Array.isArray(storeNames) ? storeNames : [storeNames];
@@ -122,7 +130,7 @@ export function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     request.onsuccess = (): void => resolve(request.result);
     request.onerror = (): void =>
-      reject(request.error || new Error("IndexedDB request failed"));
+      reject(request.error || new Error('IndexedDB request failed'));
   });
 }
 
@@ -133,9 +141,8 @@ export function transactionToPromise(tx: IDBTransaction): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     tx.oncomplete = (): void => resolve();
     tx.onerror = (): void =>
-      reject(tx.error || new Error("Transaction failed"));
-    tx.onabort = (): void =>
-      reject(new Error("Transaction aborted"));
+      reject(tx.error || new Error('Transaction failed'));
+    tx.onabort = (): void => reject(new Error('Transaction aborted'));
   });
 }
 
@@ -144,7 +151,7 @@ export function transactionToPromise(tx: IDBTransaction): Promise<void> {
  */
 export async function deleteDatabase(): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
+    if (typeof indexedDB === 'undefined') {
       resolve();
       return;
     }
@@ -153,17 +160,17 @@ export async function deleteDatabase(): Promise<void> {
     const request = indexedDB.deleteDatabase(DB_NAME);
 
     request.onsuccess = (): void => {
-      console.log("[IndexedDB] Database deleted successfully");
+      console.log('[IndexedDB] Database deleted successfully');
       resolve();
     };
 
     request.onerror = (): void => {
-      console.error("[IndexedDB] Failed to delete database", request.error);
-      reject(request.error || new Error("Failed to delete database"));
+      console.error('[IndexedDB] Failed to delete database', request.error);
+      reject(request.error || new Error('Failed to delete database'));
     };
 
     request.onblocked = (): void => {
-      console.warn("[IndexedDB] Database deletion blocked");
+      console.warn('[IndexedDB] Database deletion blocked');
     };
   });
 }
@@ -172,5 +179,5 @@ export async function deleteDatabase(): Promise<void> {
  * Checks if IndexedDB is available
  */
 export function isIndexedDBAvailable(): boolean {
-  return typeof indexedDB !== "undefined";
+  return typeof indexedDB !== 'undefined';
 }

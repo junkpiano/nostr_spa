@@ -1,6 +1,6 @@
 import { finalizeEvent } from 'nostr-tools';
+import type { NostrEvent, PubkeyHex } from '../../types/nostr';
 import { storeEvent } from './db/index.js';
-import type { NostrEvent, PubkeyHex } from "../../types/nostr";
 
 interface ComposeOverlayOptions {
   composeButton: HTMLElement | null;
@@ -11,57 +11,74 @@ interface ComposeOverlayOptions {
 }
 
 export function setupComposeOverlay(options: ComposeOverlayOptions): void {
-  const overlay: HTMLElement | null = document.getElementById("compose-overlay");
-  const backdrop: HTMLElement | null = document.getElementById("compose-overlay-backdrop");
-  const closeBtn: HTMLElement | null = document.getElementById("compose-overlay-close");
-  const textarea: HTMLTextAreaElement | null = document.getElementById("compose-textarea") as HTMLTextAreaElement;
-  const submitBtn: HTMLButtonElement | null = document.getElementById("compose-submit") as HTMLButtonElement;
-  const statusEl: HTMLElement | null = document.getElementById("compose-status");
+  const overlay: HTMLElement | null =
+    document.getElementById('compose-overlay');
+  const backdrop: HTMLElement | null = document.getElementById(
+    'compose-overlay-backdrop',
+  );
+  const closeBtn: HTMLElement | null = document.getElementById(
+    'compose-overlay-close',
+  );
+  const textarea: HTMLTextAreaElement | null = document.getElementById(
+    'compose-textarea',
+  ) as HTMLTextAreaElement;
+  const submitBtn: HTMLButtonElement | null = document.getElementById(
+    'compose-submit',
+  ) as HTMLButtonElement;
+  const statusEl: HTMLElement | null =
+    document.getElementById('compose-status');
 
-  if (!overlay || !backdrop || !closeBtn || !textarea || !submitBtn || !statusEl) {
+  if (
+    !overlay ||
+    !backdrop ||
+    !closeBtn ||
+    !textarea ||
+    !submitBtn ||
+    !statusEl
+  ) {
     return;
   }
   let isSubmitting: boolean = false;
 
   const openOverlay = (): void => {
-    overlay.style.display = "";
+    overlay.style.display = '';
     textarea.focus();
   };
 
   const closeOverlay = (): void => {
-    overlay.style.display = "none";
-    statusEl.textContent = "";
+    overlay.style.display = 'none';
+    statusEl.textContent = '';
   };
 
   const refreshStatus = (): void => {
-    const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
+    const hasExtension: boolean = Boolean((window as any).nostr?.signEvent);
     const hasPrivateKey: boolean = Boolean(options.getSessionPrivateKey());
     if (hasExtension) {
-      statusEl.textContent = "Signing with extension";
+      statusEl.textContent = 'Signing with extension';
     } else if (hasPrivateKey) {
-      statusEl.textContent = "Signing with private key (session)";
+      statusEl.textContent = 'Signing with private key (session)';
     } else {
-      statusEl.textContent = "Sign-in required to post";
+      statusEl.textContent = 'Sign-in required to post';
     }
 
     if (isSubmitting) {
       submitBtn.disabled = true;
-      submitBtn.classList.add("opacity-60", "cursor-not-allowed");
+      submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
     } else {
       submitBtn.disabled = false;
-      submitBtn.classList.remove("opacity-60", "cursor-not-allowed");
+      submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
     }
   };
 
   if (options.composeButton) {
-    options.composeButton.addEventListener("click", (): void => {
+    options.composeButton.addEventListener('click', (): void => {
       refreshStatus();
       openOverlay();
     });
   }
 
-  backdrop.addEventListener("click", closeOverlay);
-  closeBtn.addEventListener("click", closeOverlay);
+  backdrop.addEventListener('click', closeOverlay);
+  closeBtn.addEventListener('click', closeOverlay);
 
   const isTypingContext = (target: EventTarget | null): boolean => {
     if (!(target instanceof HTMLElement)) {
@@ -69,7 +86,11 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
     }
 
     const tagName: string = target.tagName.toLowerCase();
-    if (tagName === "input" || tagName === "textarea" || target.isContentEditable) {
+    if (
+      tagName === 'input' ||
+      tagName === 'textarea' ||
+      target.isContentEditable
+    ) {
       return true;
     }
 
@@ -80,18 +101,22 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
     if (!options.composeButton) {
       return false;
     }
-    return options.composeButton.style.display !== "none";
+    return options.composeButton.style.display !== 'none';
   };
 
-  document.addEventListener("keydown", (event: KeyboardEvent): void => {
-    const isOverlayOpen: boolean = overlay.style.display !== "none";
+  document.addEventListener('keydown', (event: KeyboardEvent): void => {
+    const isOverlayOpen: boolean = overlay.style.display !== 'none';
 
-    if (isOverlayOpen && event.key === "Escape") {
+    if (isOverlayOpen && event.key === 'Escape') {
       closeOverlay();
       return;
     }
 
-    if (!isOverlayOpen && event.key.toLowerCase() === "n" && !isTypingContext(event.target)) {
+    if (
+      !isOverlayOpen &&
+      event.key.toLowerCase() === 'n' &&
+      !isTypingContext(event.target)
+    ) {
       if (!canOpenCompose()) {
         return;
       }
@@ -101,7 +126,11 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
       return;
     }
 
-    if (isOverlayOpen && event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    if (
+      isOverlayOpen &&
+      event.key === 'Enter' &&
+      (event.metaKey || event.ctrlKey)
+    ) {
       event.preventDefault();
       if (!submitBtn.disabled) {
         submitBtn.click();
@@ -109,32 +138,34 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
     }
   });
 
-  submitBtn.addEventListener("click", async (): Promise<void> => {
+  submitBtn.addEventListener('click', async (): Promise<void> => {
     if (!textarea.value.trim()) {
       textarea.focus();
       return;
     }
 
-    const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
+    const hasExtension: boolean = Boolean((window as any).nostr?.signEvent);
     const privateKey: Uint8Array | null = options.getSessionPrivateKey();
     if (!hasExtension && !privateKey) {
-      statusEl.textContent = "Sign-in required to post";
-      alert("Sign-in required to post. Please log in with extension or private key.");
+      statusEl.textContent = 'Sign-in required to post';
+      alert(
+        'Sign-in required to post. Please log in with extension or private key.',
+      );
       refreshStatus();
       return;
     }
 
     isSubmitting = true;
     refreshStatus();
-    statusEl.textContent = "Posting...";
+    statusEl.textContent = 'Posting...';
 
     try {
-      const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+      const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
       if (!storedPubkey) {
-        throw new Error("Not logged in");
+        throw new Error('Not logged in');
       }
 
-      const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
+      const unsignedEvent: Omit<NostrEvent, 'id' | 'sig'> = {
         kind: 1,
         pubkey: storedPubkey as PubkeyHex,
         created_at: Math.floor(Date.now() / 1000),
@@ -147,21 +178,21 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
         signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
       } else {
         if (!privateKey) {
-          throw new Error("No signing method available");
+          throw new Error('No signing method available');
         }
         signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
       }
 
       await options.publishEvent(signedEvent, options.getRelays());
       await storeEvent(signedEvent, { isHomeTimeline: false });
-      textarea.value = "";
-      statusEl.textContent = "Posted";
+      textarea.value = '';
+      statusEl.textContent = 'Posted';
       closeOverlay();
       await options.refreshTimeline();
     } catch (error: unknown) {
-      console.error("Failed to post:", error);
-      statusEl.textContent = "Failed to post";
-      alert("Failed to post. Please try again.");
+      console.error('Failed to post:', error);
+      statusEl.textContent = 'Failed to post';
+      alert('Failed to post. Please try again.');
     } finally {
       isSubmitting = false;
       refreshStatus();

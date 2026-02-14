@@ -1,9 +1,9 @@
-import type { PubkeyHex } from "../../../types/nostr.js";
-import type { TimelineType } from "./types.js";
+import type { PubkeyHex } from '../../../types/nostr.js';
 import {
-  prependEventsToTimeline as dbPrependEvents,
   appendEventsToTimeline as dbAppendEvents,
-} from "./timelines-store.js";
+  prependEventsToTimeline as dbPrependEvents,
+} from './timelines-store.js';
+import type { TimelineType } from './types.js';
 
 interface TimelineUpdate {
   type: TimelineType;
@@ -26,7 +26,7 @@ class TimelineBuilder {
     type: TimelineType,
     eventIds: string[],
     newestTimestamp: number,
-    pubkey?: PubkeyHex | undefined
+    pubkey?: PubkeyHex | undefined,
   ): void {
     this.queue.push({
       type,
@@ -46,7 +46,7 @@ class TimelineBuilder {
     type: TimelineType,
     eventIds: string[],
     oldestTimestamp: number,
-    pubkey?: PubkeyHex | undefined
+    pubkey?: PubkeyHex | undefined,
   ): void {
     this.queue.push({
       type,
@@ -96,7 +96,7 @@ class TimelineBuilder {
       >();
 
       for (const update of updates) {
-        const key = `${update.type}:${update.pubkey || ""}`;
+        const key = `${update.type}:${update.pubkey || ''}`;
         if (!grouped.has(key)) {
           grouped.set(key, { prepend: [], append: [] });
         }
@@ -111,7 +111,7 @@ class TimelineBuilder {
 
       // Process each timeline
       for (const [key, { prepend, append }] of grouped) {
-        const [type, pubkeyStr] = key.split(":");
+        const [type, pubkeyStr] = key.split(':');
         const pubkey = pubkeyStr || undefined;
 
         // Process prepends (newer events)
@@ -123,11 +123,11 @@ class TimelineBuilder {
             type as TimelineType,
             pubkey as PubkeyHex | undefined,
             allEventIds,
-            newestTimestamp
+            newestTimestamp,
           );
 
           console.log(
-            `[TimelineBuilder] Prepended ${allEventIds.length} events to ${type} timeline`
+            `[TimelineBuilder] Prepended ${allEventIds.length} events to ${type} timeline`,
           );
         }
 
@@ -140,16 +140,19 @@ class TimelineBuilder {
             type as TimelineType,
             pubkey as PubkeyHex | undefined,
             allEventIds,
-            oldestTimestamp
+            oldestTimestamp,
           );
 
           console.log(
-            `[TimelineBuilder] Appended ${allEventIds.length} events to ${type} timeline`
+            `[TimelineBuilder] Appended ${allEventIds.length} events to ${type} timeline`,
           );
         }
       }
     } catch (error) {
-      console.error("[TimelineBuilder] Failed to flush timeline updates:", error);
+      console.error(
+        '[TimelineBuilder] Failed to flush timeline updates:',
+        error,
+      );
     } finally {
       this.isProcessing = false;
 
@@ -188,7 +191,7 @@ export function prependToTimeline(
   type: TimelineType,
   eventIds: string[],
   newestTimestamp: number,
-  pubkey?: PubkeyHex | undefined
+  pubkey?: PubkeyHex | undefined,
 ): void {
   timelineBuilder.queuePrepend(type, eventIds, newestTimestamp, pubkey);
 }
@@ -200,7 +203,7 @@ export function appendToTimeline(
   type: TimelineType,
   eventIds: string[],
   oldestTimestamp: number,
-  pubkey?: PubkeyHex | undefined
+  pubkey?: PubkeyHex | undefined,
 ): void {
   timelineBuilder.queueAppend(type, eventIds, oldestTimestamp, pubkey);
 }

@@ -1,114 +1,107 @@
 // Core database
-export {
-  openDb,
-  closeDb,
-  createTransaction,
-  requestToPromise,
-  transactionToPromise,
-  deleteDatabase,
-  isIndexedDBAvailable,
-} from "./indexeddb.js";
-
-// Types and constants
-export type {
-  CachedEvent,
-  CachedProfile,
-  Timeline,
-  TimelineType,
-  TimelineKey,
-  Metadata,
-  CacheStats,
-  SyncStatus,
-  EventQueryOptions,
-  TransactionMode,
-  StoreName,
-} from "./types.js";
-
-export {
-  DB_NAME,
-  DB_VERSION,
-  STORE_NAMES,
-  LIMITS,
-  TTL,
-} from "./types.js";
-
-// Events store
-export {
-  storeEvent,
-  storeEvents,
-  getEvent,
-  getEvents,
-  queryEvents,
-  countEvents,
-  countProtectedEvents,
-  pruneEvents,
-  clearEvents,
-  deleteEvents,
-  getEventsByAuthor,
-} from "./events-store.js";
-
-// Profiles store
-export {
-  storeProfile,
-  storeProfiles,
-  getProfile,
-  getProfiles,
-  profileNeedsRefresh,
-  countProfiles,
-  pruneProfiles,
-  clearProfiles,
-  deleteProfiles,
-} from "./profiles-store.js";
-
-// Timelines store
-export {
-  getTimelineKey,
-  storeTimeline,
-  getTimeline,
-  prependEventsToTimeline,
-  appendEventsToTimeline,
-  removeEventFromTimeline,
-  getAllTimelines,
-  countTimelines,
-  pruneTimelines,
-  clearTimelines,
-  deleteTimeline,
-} from "./timelines-store.js";
-
-// Metadata store
-export {
-  setMetadata,
-  getMetadata,
-  deleteMetadata,
-  getSyncStatus,
-  setSyncStatus,
-  updateLastSync,
-  getCacheStats,
-  clearMetadata,
-} from "./metadata-store.js";
-
-// Timeline queries
-export type { CachedTimelineResult } from "./timeline-queries.js";
-export {
-  getCachedTimeline,
-  getTimelineNewestTimestamp,
-  getTimelineOldestTimestamp,
-  hasTimelineCache,
-  getTimelineCacheSize,
-} from "./timeline-queries.js";
 
 // Event writer (batched writes with debouncing)
 export {
   eventWriter,
+  flushEvents,
   writeEvent,
   writeEvents,
-  flushEvents,
-} from "./event-writer.js";
+} from './event-writer.js';
+// Events store
+export {
+  clearEvents,
+  countEvents,
+  countProtectedEvents,
+  deleteEvents,
+  getEvent,
+  getEvents,
+  getEventsByAuthor,
+  pruneEvents,
+  queryEvents,
+  storeEvent,
+  storeEvents,
+} from './events-store.js';
+export {
+  closeDb,
+  createTransaction,
+  deleteDatabase,
+  isIndexedDBAvailable,
+  openDb,
+  requestToPromise,
+  transactionToPromise,
+} from './indexeddb.js';
+// Metadata store
+export {
+  clearMetadata,
+  deleteMetadata,
+  getCacheStats,
+  getMetadata,
+  getSyncStatus,
+  setMetadata,
+  setSyncStatus,
+  updateLastSync,
+} from './metadata-store.js';
 
+// Profiles store
+export {
+  clearProfiles,
+  countProfiles,
+  deleteProfiles,
+  getProfile,
+  getProfiles,
+  profileNeedsRefresh,
+  pruneProfiles,
+  storeProfile,
+  storeProfiles,
+} from './profiles-store.js';
 // Timeline builder (batched timeline updates)
 export {
-  timelineBuilder,
-  prependToTimeline,
   appendToTimeline,
   flushTimelines,
-} from "./timeline-builder.js";
+  prependToTimeline,
+  timelineBuilder,
+} from './timeline-builder.js';
+// Timeline queries
+export type { CachedTimelineResult } from './timeline-queries.js';
+export {
+  getCachedTimeline,
+  getTimelineCacheSize,
+  getTimelineNewestTimestamp,
+  getTimelineOldestTimestamp,
+  hasTimelineCache,
+} from './timeline-queries.js';
+// Timelines store
+export {
+  appendEventsToTimeline,
+  clearTimelines,
+  countTimelines,
+  deleteTimeline,
+  getAllTimelines,
+  getTimeline,
+  getTimelineKey,
+  prependEventsToTimeline,
+  pruneTimelines,
+  removeEventFromTimeline,
+  storeTimeline,
+} from './timelines-store.js';
+// Types and constants
+export type {
+  CachedEvent,
+  CachedProfile,
+  CacheStats,
+  EventQueryOptions,
+  Metadata,
+  StoreName,
+  SyncStatus,
+  Timeline,
+  TimelineKey,
+  TimelineType,
+  TransactionMode,
+} from './types.js';
+export {
+  DB_NAME,
+  DB_VERSION,
+  LIMITS,
+  STORE_NAMES,
+  TTL,
+} from './types.js';

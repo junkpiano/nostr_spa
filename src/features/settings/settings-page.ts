@@ -1,6 +1,12 @@
-import { getEventCacheStats, clearEventCache } from "../../common/event-cache.js";
-import { clearProfileCache, getProfileCacheStats } from "../profile/profile-cache.js";
-import type { SetActiveNavFn } from "../../common/types.js";
+import {
+  clearEventCache,
+  getEventCacheStats,
+} from '../../common/event-cache.js';
+import type { SetActiveNavFn } from '../../common/types.js';
+import {
+  clearProfileCache,
+  getProfileCacheStats,
+} from '../profile/profile-cache.js';
 
 interface SettingsPageOptions {
   closeAllWebSockets: () => void;
@@ -13,9 +19,9 @@ interface SettingsPageOptions {
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "0 B";
+    return '0 B';
   }
-  const units: string[] = ["B", "KB", "MB", "GB"];
+  const units: string[] = ['B', 'KB', 'MB', 'GB'];
   let value: number = bytes;
   let unitIndex: number = 0;
   while (value >= 1024 && unitIndex < units.length - 1) {
@@ -31,26 +37,39 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
   options.stopBackgroundFetch();
   options.clearNotification();
 
-  const homeButton: HTMLElement | null = document.getElementById("nav-home");
-  const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
-  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
-  options.setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, settingsButton);
+  const homeButton: HTMLElement | null = document.getElementById('nav-home');
+  const globalButton: HTMLElement | null =
+    document.getElementById('nav-global');
+  const relaysButton: HTMLElement | null =
+    document.getElementById('nav-relays');
+  const profileLink: HTMLElement | null =
+    document.getElementById('nav-profile');
+  const settingsButton: HTMLElement | null =
+    document.getElementById('nav-settings');
+  options.setActiveNav(
+    homeButton,
+    globalButton,
+    relaysButton,
+    profileLink,
+    settingsButton,
+    settingsButton,
+  );
 
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+  const postsHeader: HTMLElement | null =
+    document.getElementById('posts-header');
   if (postsHeader) {
-    postsHeader.textContent = "Settings";
-    postsHeader.style.display = "";
+    postsHeader.textContent = 'Settings';
+    postsHeader.style.display = '';
   }
 
   if (options.profileSection) {
-    options.profileSection.innerHTML = "";
-    options.profileSection.className = "";
+    options.profileSection.innerHTML = '';
+    options.profileSection.className = '';
   }
 
   if (options.output) {
-    const isEnergySavingEnabled = localStorage.getItem("energy_saving_mode") === "true";
+    const isEnergySavingEnabled =
+      localStorage.getItem('energy_saving_mode') === 'true';
 
     options.output.innerHTML = `
       <div class="space-y-6 text-sm">
@@ -62,7 +81,7 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
               <p class="text-xs text-gray-600">Images and videos will show as links instead of loading inline</p>
             </div>
             <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" id="energy-saving-toggle" class="sr-only peer" ${isEnergySavingEnabled ? "checked" : ""}>
+              <input type="checkbox" id="energy-saving-toggle" class="sr-only peer" ${isEnergySavingEnabled ? 'checked' : ''}>
               <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
             </label>
           </div>
@@ -89,32 +108,39 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
     `;
   }
 
-  const energySavingToggle: HTMLInputElement | null = document.getElementById("energy-saving-toggle") as HTMLInputElement | null;
-  const sizeEl: HTMLElement | null = document.getElementById("cache-size");
-  const eventsEl: HTMLElement | null = document.getElementById("cache-events");
-  const profilesEl: HTMLElement | null = document.getElementById("cache-profiles");
-  const statusEl: HTMLElement | null = document.getElementById("cache-status");
-  const clearBtn: HTMLButtonElement | null = document.getElementById("cache-clear") as HTMLButtonElement | null;
+  const energySavingToggle: HTMLInputElement | null = document.getElementById(
+    'energy-saving-toggle',
+  ) as HTMLInputElement | null;
+  const sizeEl: HTMLElement | null = document.getElementById('cache-size');
+  const eventsEl: HTMLElement | null = document.getElementById('cache-events');
+  const profilesEl: HTMLElement | null =
+    document.getElementById('cache-profiles');
+  const statusEl: HTMLElement | null = document.getElementById('cache-status');
+  const clearBtn: HTMLButtonElement | null = document.getElementById(
+    'cache-clear',
+  ) as HTMLButtonElement | null;
 
   // Energy saving mode toggle
   if (energySavingToggle) {
-    energySavingToggle.addEventListener("change", (): void => {
+    energySavingToggle.addEventListener('change', (): void => {
       const isEnabled = energySavingToggle.checked;
-      localStorage.setItem("energy_saving_mode", isEnabled ? "true" : "false");
+      localStorage.setItem('energy_saving_mode', isEnabled ? 'true' : 'false');
 
       // Dispatch event to notify the app
-      window.dispatchEvent(new CustomEvent("energy-saving-changed", {
-        detail: { enabled: isEnabled }
-      }));
+      window.dispatchEvent(
+        new CustomEvent('energy-saving-changed', {
+          detail: { enabled: isEnabled },
+        }),
+      );
 
       // Show feedback
       if (statusEl) {
         statusEl.textContent = isEnabled
-          ? "⚡ Energy saving mode enabled"
-          : "Energy saving mode disabled";
+          ? '⚡ Energy saving mode enabled'
+          : 'Energy saving mode disabled';
         setTimeout((): void => {
           if (statusEl) {
-            statusEl.textContent = "";
+            statusEl.textContent = '';
           }
         }, 3000);
       }
@@ -122,7 +148,10 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
   }
 
   const updateStats = async (): Promise<void> => {
-    const [eventStats, profileStats] = await Promise.all([getEventCacheStats(), getProfileCacheStats()]);
+    const [eventStats, profileStats] = await Promise.all([
+      getEventCacheStats(),
+      getProfileCacheStats(),
+    ]);
     const totalBytes: number = eventStats.bytes + profileStats.bytes;
     if (sizeEl) {
       sizeEl.textContent = formatBytes(totalBytes);
@@ -137,27 +166,27 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
 
   updateStats().catch(() => {
     if (sizeEl) {
-      sizeEl.textContent = "不明";
+      sizeEl.textContent = '不明';
     }
   });
 
   if (clearBtn) {
-    clearBtn.addEventListener("click", async (): Promise<void> => {
-      if (!window.confirm("保存データを削除しますか？")) {
+    clearBtn.addEventListener('click', async (): Promise<void> => {
+      if (!window.confirm('保存データを削除しますか？')) {
         return;
       }
       clearBtn.disabled = true;
-      clearBtn.classList.add("opacity-60", "cursor-not-allowed");
+      clearBtn.classList.add('opacity-60', 'cursor-not-allowed');
       if (statusEl) {
-        statusEl.textContent = "削除中...";
+        statusEl.textContent = '削除中...';
       }
       await Promise.all([clearEventCache(), clearProfileCache()]);
       await updateStats();
       if (statusEl) {
-        statusEl.textContent = "削除しました。";
+        statusEl.textContent = '削除しました。';
       }
       clearBtn.disabled = false;
-      clearBtn.classList.remove("opacity-60", "cursor-not-allowed");
+      clearBtn.classList.remove('opacity-60', 'cursor-not-allowed');
     });
   }
 }

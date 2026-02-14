@@ -1,10 +1,14 @@
 import { nip19 } from 'nostr-tools';
-import { fetchProfile } from '../profile/profile.js';
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  PubkeyHex,
+} from '../../../types/nostr';
+import { createRelayWebSocket } from '../../common/relay-socket.js';
 import { getDisplayName, replaceEmojiShortcodes } from '../../utils/utils.js';
-import type { NostrProfile, Npub } from '../../../types/nostr';
-import { createRelayWebSocket } from "../../common/relay-socket.js";
-import { recordRelayFailure } from "../relays/relays.js";
-import type { NostrEvent, PubkeyHex } from '../../../types/nostr';
+import { fetchProfile } from '../profile/profile.js';
+import { recordRelayFailure } from '../relays/relays.js';
 
 interface LoadNotificationsOptions {
   relays: string[];
@@ -16,23 +20,32 @@ interface LoadNotificationsOptions {
 let lastFetchedAt: number = 0;
 let cachedEvents: NostrEvent[] = [];
 
-function classifyNotification(event: NostrEvent, targetPubkey: PubkeyHex): 'mention' | 'reply' | 'reaction' | null {
+function classifyNotification(
+  event: NostrEvent,
+  targetPubkey: PubkeyHex,
+): 'mention' | 'reply' | 'reaction' | null {
   if (event.kind === 7) {
     return 'reaction';
   }
   if (event.kind !== 1) {
     return null;
   }
-  const hasPTarget: boolean = event.tags.some((tag: string[]): boolean => tag[0] === 'p' && tag[1] === targetPubkey);
+  const hasPTarget: boolean = event.tags.some(
+    (tag: string[]): boolean => tag[0] === 'p' && tag[1] === targetPubkey,
+  );
   if (!hasPTarget) {
     return null;
   }
-  const hasETag: boolean = event.tags.some((tag: string[]): boolean => tag[0] === 'e');
+  const hasETag: boolean = event.tags.some(
+    (tag: string[]): boolean => tag[0] === 'e',
+  );
   return hasETag ? 'reply' : 'mention';
 }
 
 function getTargetEventId(event: NostrEvent): string | null {
-  const eTag: string[] | undefined = event.tags.find((tag: string[]): boolean => tag[0] === 'e');
+  const eTag: string[] | undefined = event.tags.find(
+    (tag: string[]): boolean => tag[0] === 'e',
+  );
   return eTag?.[1] || null;
 }
 
@@ -59,7 +72,8 @@ function renderNotifications(
     }
 
     const row: HTMLAnchorElement = document.createElement('a');
-    row.className = 'block rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 hover:bg-gray-100 transition-colors';
+    row.className =
+      'block rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 hover:bg-gray-100 transition-colors';
 
     const authorNpub: Npub = nip19.npubEncode(event.pubkey);
     const shortAuthor: string = `${authorNpub.slice(0, 10)}…${authorNpub.slice(-4)}`;
@@ -142,12 +156,12 @@ async function fetchNotifications(
         }, 5000);
 
         socket.onopen = (): void => {
-          const subId: string = 'notif-' + Math.random().toString(36).slice(2);
-          const req: [string, string, { kinds: number[]; "#p": string[]; limit: number }] = [
-            'REQ',
-            subId,
-            { kinds: [1, 7], '#p': [targetPubkey], limit },
-          ];
+          const subId: string = `notif-${Math.random().toString(36).slice(2)}`;
+          const req: [
+            string,
+            string,
+            { kinds: number[]; '#p': string[]; limit: number },
+          ] = ['REQ', subId, { kinds: [1, 7], '#p': [targetPubkey], limit }];
           socket.send(JSON.stringify(req));
         };
 
@@ -176,22 +190,34 @@ async function fetchNotifications(
   await Promise.allSettled(promises);
 
   const events: NostrEvent[] = Array.from(results.values());
-  events.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
+  events.sort(
+    (a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at,
+  );
   return events.slice(0, limit);
 }
 
-export async function loadNotifications(options: LoadNotificationsOptions): Promise<NostrEvent[]> {
+export async function loadNotifications(
+  options: LoadNotificationsOptions,
+): Promise<NostrEvent[]> {
   const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
   if (!storedPubkey) {
     return [];
   }
 
   const now: number = Date.now();
-  if (!options.force && cachedEvents.length > 0 && now - lastFetchedAt < 10000) {
+  if (
+    !options.force &&
+    cachedEvents.length > 0 &&
+    now - lastFetchedAt < 10000
+  ) {
     return cachedEvents;
   }
 
-  const events: NostrEvent[] = await fetchNotifications(options.relays, storedPubkey as PubkeyHex, options.limit);
+  const events: NostrEvent[] = await fetchNotifications(
+    options.relays,
+    storedPubkey as PubkeyHex,
+    options.limit,
+  );
   cachedEvents = events;
   lastFetchedAt = now;
   return events;
@@ -202,14 +228,18 @@ export function clearNotifications(): void {
   lastFetchedAt = 0;
 }
 
-export async function loadNotificationsPage(options: LoadNotificationsOptions): Promise<void> {
+export async function loadNotificationsPage(
+  options: LoadNotificationsOptions,
+): Promise<void> {
   const isRouteActive: () => boolean = options.isRouteActive || (() => true);
   if (!isRouteActive()) {
     return;
   }
   const output: HTMLElement | null = document.getElementById('nostr-output');
-  const profileSection: HTMLElement | null = document.getElementById('profile-section');
-  const postsHeader: HTMLElement | null = document.getElementById('posts-header');
+  const profileSection: HTMLElement | null =
+    document.getElementById('profile-section');
+  const postsHeader: HTMLElement | null =
+    document.getElementById('posts-header');
   const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
 
   if (postsHeader) {
@@ -227,16 +257,24 @@ export async function loadNotificationsPage(options: LoadNotificationsOptions): 
   }
 
   if (!storedPubkey) {
-    output.innerHTML = '<p class=\"text-gray-600\">Sign in to view notifications.</p>';
+    output.innerHTML =
+      '<p class="text-gray-600">Sign in to view notifications.</p>';
     return;
   }
 
-  output.innerHTML = '<div class=\"text-sm text-gray-500\">Loading notifications...</div>';
-  const events: NostrEvent[] = await loadNotifications({ ...options, force: true });
+  output.innerHTML =
+    '<div class="text-sm text-gray-500">Loading notifications...</div>';
+  const events: NostrEvent[] = await loadNotifications({
+    ...options,
+    force: true,
+  });
   if (!isRouteActive()) {
     return;
   }
-  const displayNames: Map<PubkeyHex, string> = await loadDisplayNames(options.relays, events);
+  const displayNames: Map<PubkeyHex, string> = await loadDisplayNames(
+    options.relays,
+    events,
+  );
   if (!isRouteActive()) {
     return;
   }
@@ -253,7 +291,9 @@ async function loadDisplayNames(
   relays: string[],
   events: NostrEvent[],
 ): Promise<Map<PubkeyHex, string>> {
-  const pubkeys: PubkeyHex[] = Array.from(new Set(events.map((event: NostrEvent): PubkeyHex => event.pubkey)));
+  const pubkeys: PubkeyHex[] = Array.from(
+    new Set(events.map((event: NostrEvent): PubkeyHex => event.pubkey)),
+  );
   const displayNames: Map<PubkeyHex, string> = new Map();
 
   await Promise.allSettled(
@@ -263,7 +303,10 @@ async function loadDisplayNames(
         const npub: Npub = nip19.npubEncode(pubkey);
         displayNames.set(pubkey, getDisplayName(npub, profile));
       } catch (error: unknown) {
-        console.warn('Failed to load display name for notification author:', error);
+        console.warn(
+          'Failed to load display name for notification author:',
+          error,
+        );
       }
     }),
   );

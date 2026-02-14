@@ -1,20 +1,29 @@
 export function setupSearchBar(output: HTMLElement | null): void {
-  const searchButton: HTMLElement | null = document.getElementById('search-button');
-  const clearSearchButton: HTMLElement | null = document.getElementById('clear-search-button');
+  const searchButton: HTMLElement | null =
+    document.getElementById('search-button');
+  const clearSearchButton: HTMLElement | null = document.getElementById(
+    'clear-search-button',
+  );
   const searchInput: HTMLInputElement | null = document.getElementById(
     'search-input',
   ) as HTMLInputElement;
 
   // Mobile search elements
-  const searchButtonMobile: HTMLElement | null = document.getElementById('search-button-mobile');
-  const clearSearchButtonMobile: HTMLElement | null = document.getElementById('clear-search-button-mobile');
+  const searchButtonMobile: HTMLElement | null = document.getElementById(
+    'search-button-mobile',
+  );
+  const clearSearchButtonMobile: HTMLElement | null = document.getElementById(
+    'clear-search-button-mobile',
+  );
   const searchInputMobile: HTMLInputElement | null = document.getElementById(
     'search-input-mobile',
   ) as HTMLInputElement;
-  const searchOverlay: HTMLElement | null = document.getElementById('search-overlay');
+  const searchOverlay: HTMLElement | null =
+    document.getElementById('search-overlay');
 
   function performSearch(fromMobile: boolean = false): void {
-    const activeInput = fromMobile && searchInputMobile ? searchInputMobile : searchInput;
+    const activeInput =
+      fromMobile && searchInputMobile ? searchInputMobile : searchInput;
 
     if (activeInput && output) {
       const query: string = activeInput.value.trim().toLowerCase();
@@ -29,11 +38,14 @@ export function setupSearchBar(output: HTMLElement | null): void {
         searchInputMobile.value = query;
       }
 
-      const eventContainers: NodeListOf<HTMLElement> = output.querySelectorAll('.event-container');
+      const eventContainers: NodeListOf<HTMLElement> =
+        output.querySelectorAll('.event-container');
       let matchCount: number = 0;
 
       eventContainers.forEach((container: HTMLElement): void => {
-        const contentDiv: HTMLElement | null = container.querySelector('.whitespace-pre-wrap');
+        const contentDiv: HTMLElement | null = container.querySelector(
+          '.whitespace-pre-wrap',
+        );
         if (contentDiv) {
           const content: string = contentDiv.textContent?.toLowerCase() || '';
           if (content.includes(query)) {
@@ -58,7 +70,8 @@ export function setupSearchBar(output: HTMLElement | null): void {
         searchOverlay.style.display = 'none';
       }
 
-      const postsHeader: HTMLElement | null = document.getElementById('posts-header');
+      const postsHeader: HTMLElement | null =
+        document.getElementById('posts-header');
       if (postsHeader) {
         postsHeader.textContent = `Search Results (${matchCount})`;
       }
@@ -75,7 +88,8 @@ export function setupSearchBar(output: HTMLElement | null): void {
     }
 
     if (output) {
-      const eventContainers: NodeListOf<HTMLElement> = output.querySelectorAll('.event-container');
+      const eventContainers: NodeListOf<HTMLElement> =
+        output.querySelectorAll('.event-container');
       eventContainers.forEach((container: HTMLElement): void => {
         container.style.display = '';
       });
@@ -89,7 +103,8 @@ export function setupSearchBar(output: HTMLElement | null): void {
       clearSearchButtonMobile.style.display = 'none';
     }
 
-    const postsHeader: HTMLElement | null = document.getElementById('posts-header');
+    const postsHeader: HTMLElement | null =
+      document.getElementById('posts-header');
     if (postsHeader) {
       const path: string = window.location.pathname;
       if (path === '/global') {
@@ -129,7 +144,9 @@ export function setupSearchBar(output: HTMLElement | null): void {
 
   // Mobile search event listeners
   if (searchButtonMobile) {
-    searchButtonMobile.addEventListener('click', (): void => performSearch(true));
+    searchButtonMobile.addEventListener('click', (): void =>
+      performSearch(true),
+    );
   }
 
   if (clearSearchButtonMobile) {

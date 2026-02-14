@@ -1,15 +1,19 @@
-import type { NostrEvent, NostrProfile, PubkeyHex } from "../../../types/nostr.js";
+import type {
+  NostrEvent,
+  NostrProfile,
+  PubkeyHex,
+} from '../../../types/nostr.js';
 
 // Database configuration
-export const DB_NAME = "nostr_cache_v2" as const;
+export const DB_NAME = 'nostr_cache_v2' as const;
 export const DB_VERSION = 1 as const;
 
 // Store names
 export const STORE_NAMES = {
-  EVENTS: "events",
-  PROFILES: "profiles",
-  TIMELINES: "timelines",
-  METADATA: "metadata",
+  EVENTS: 'events',
+  PROFILES: 'profiles',
+  TIMELINES: 'timelines',
+  METADATA: 'metadata',
 } as const;
 
 // Storage limits
@@ -49,7 +53,7 @@ export interface CachedProfile {
 }
 
 // Timeline types
-export type TimelineType = "home" | "global" | "user";
+export type TimelineType = 'home' | 'global' | 'user';
 
 export interface TimelineKey {
   type: TimelineType;
@@ -108,6 +112,6 @@ export interface EventQueryOptions {
 }
 
 // Transaction types
-export type TransactionMode = "readonly" | "readwrite";
+export type TransactionMode = 'readonly' | 'readwrite';
 
-export type StoreName = typeof STORE_NAMES[keyof typeof STORE_NAMES];
+export type StoreName = (typeof STORE_NAMES)[keyof typeof STORE_NAMES];

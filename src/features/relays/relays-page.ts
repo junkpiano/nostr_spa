@@ -1,5 +1,5 @@
-import { createRelayWebSocket } from "../../common/relay-socket.js";
-import type { SetActiveNavFn } from "../../common/types.js";
+import { createRelayWebSocket } from '../../common/relay-socket.js';
+import type { SetActiveNavFn } from '../../common/types.js';
 
 interface RelaysPageOptions {
   closeAllWebSockets: () => void;
@@ -20,22 +20,34 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
   options.stopBackgroundFetch();
   options.clearNotification();
 
-  const homeButton: HTMLElement | null = document.getElementById("nav-home");
-  const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
-  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
-  options.setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, relaysButton);
+  const homeButton: HTMLElement | null = document.getElementById('nav-home');
+  const globalButton: HTMLElement | null =
+    document.getElementById('nav-global');
+  const relaysButton: HTMLElement | null =
+    document.getElementById('nav-relays');
+  const profileLink: HTMLElement | null =
+    document.getElementById('nav-profile');
+  const settingsButton: HTMLElement | null =
+    document.getElementById('nav-settings');
+  options.setActiveNav(
+    homeButton,
+    globalButton,
+    relaysButton,
+    profileLink,
+    settingsButton,
+    relaysButton,
+  );
 
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+  const postsHeader: HTMLElement | null =
+    document.getElementById('posts-header');
   if (postsHeader) {
-    postsHeader.textContent = "Relay Management";
-    postsHeader.style.display = "";
+    postsHeader.textContent = 'Relay Management';
+    postsHeader.style.display = '';
   }
 
   if (options.profileSection) {
-    options.profileSection.innerHTML = "";
-    options.profileSection.className = "";
+    options.profileSection.innerHTML = '';
+    options.profileSection.className = '';
   }
 
   if (options.output) {
@@ -69,12 +81,18 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
     `;
   }
 
-  const relayInput: HTMLInputElement | null = document.getElementById("relay-input") as HTMLInputElement;
-  const relayAddButton: HTMLElement | null = document.getElementById("relay-add");
-  const relayError: HTMLElement | null = document.getElementById("relay-error");
-  const relayListEl: HTMLElement | null = document.getElementById("relay-list");
-  const broadcastButton: HTMLButtonElement | null = document.getElementById("broadcast-posts") as HTMLButtonElement;
-  const broadcastStatus: HTMLElement | null = document.getElementById("broadcast-status");
+  const relayInput: HTMLInputElement | null = document.getElementById(
+    'relay-input',
+  ) as HTMLInputElement;
+  const relayAddButton: HTMLElement | null =
+    document.getElementById('relay-add');
+  const relayError: HTMLElement | null = document.getElementById('relay-error');
+  const relayListEl: HTMLElement | null = document.getElementById('relay-list');
+  const broadcastButton: HTMLButtonElement | null = document.getElementById(
+    'broadcast-posts',
+  ) as HTMLButtonElement;
+  const broadcastStatus: HTMLElement | null =
+    document.getElementById('broadcast-status');
 
   let currentRelays: string[] = options.getRelays();
   let relayStatusSockets: WebSocket[] = [];
@@ -88,15 +106,18 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
 
   function clearError(): void {
     if (relayError) {
-      relayError.textContent = "";
+      relayError.textContent = '';
     }
   }
 
   function renderRelayList(): void {
     if (!relayListEl) return;
-    relayListEl.innerHTML = "";
+    relayListEl.innerHTML = '';
     relayStatusSockets.forEach((socket: WebSocket): void => {
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+      if (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      ) {
         socket.close();
       }
     });
@@ -107,38 +128,42 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
     relayStatusTimeouts = [];
 
     if (currentRelays.length === 0) {
-      const empty: HTMLDivElement = document.createElement("div");
-      empty.className = "text-gray-500";
-      empty.textContent = "No relays configured.";
+      const empty: HTMLDivElement = document.createElement('div');
+      empty.className = 'text-gray-500';
+      empty.textContent = 'No relays configured.';
       relayListEl.appendChild(empty);
       return;
     }
 
     currentRelays.forEach((relayUrl: string, index: number): void => {
-      const row: HTMLDivElement = document.createElement("div");
-      row.className = "flex items-center justify-between gap-3 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2";
+      const row: HTMLDivElement = document.createElement('div');
+      row.className =
+        'flex items-center justify-between gap-3 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2';
 
-      const urlText: HTMLSpanElement = document.createElement("span");
-      urlText.className = "font-mono text-xs sm:text-sm text-gray-800 break-all";
+      const urlText: HTMLSpanElement = document.createElement('span');
+      urlText.className =
+        'font-mono text-xs sm:text-sm text-gray-800 break-all';
       urlText.textContent = relayUrl;
 
-      const status: HTMLSpanElement = document.createElement("span");
-      status.className = "text-xs font-semibold px-2 py-1 rounded-full bg-gray-200 text-gray-700";
-      status.textContent = "Checking...";
+      const status: HTMLSpanElement = document.createElement('span');
+      status.className =
+        'text-xs font-semibold px-2 py-1 rounded-full bg-gray-200 text-gray-700';
+      status.textContent = 'Checking...';
 
-      const actions: HTMLDivElement = document.createElement("div");
-      actions.className = "flex gap-2 items-center";
+      const actions: HTMLDivElement = document.createElement('div');
+      actions.className = 'flex gap-2 items-center';
 
-      const upBtn: HTMLButtonElement = document.createElement("button");
-      upBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors";
-      upBtn.textContent = "↑";
-      upBtn.title = "Move up";
-      upBtn.setAttribute("aria-label", "Move relay up");
+      const upBtn: HTMLButtonElement = document.createElement('button');
+      upBtn.className =
+        'px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors';
+      upBtn.textContent = '↑';
+      upBtn.title = 'Move up';
+      upBtn.setAttribute('aria-label', 'Move relay up');
       upBtn.disabled = index === 0;
       if (upBtn.disabled) {
-        upBtn.classList.add("opacity-60", "cursor-not-allowed");
+        upBtn.classList.add('opacity-60', 'cursor-not-allowed');
       }
-      upBtn.addEventListener("click", (): void => {
+      upBtn.addEventListener('click', (): void => {
         clearError();
         if (index <= 0) return;
         const reordered: string[] = [...currentRelays];
@@ -153,16 +178,17 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         renderRelayList();
       });
 
-      const downBtn: HTMLButtonElement = document.createElement("button");
-      downBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors";
-      downBtn.textContent = "↓";
-      downBtn.title = "Move down";
-      downBtn.setAttribute("aria-label", "Move relay down");
+      const downBtn: HTMLButtonElement = document.createElement('button');
+      downBtn.className =
+        'px-3 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors';
+      downBtn.textContent = '↓';
+      downBtn.title = 'Move down';
+      downBtn.setAttribute('aria-label', 'Move relay down');
       downBtn.disabled = index === currentRelays.length - 1;
       if (downBtn.disabled) {
-        downBtn.classList.add("opacity-60", "cursor-not-allowed");
+        downBtn.classList.add('opacity-60', 'cursor-not-allowed');
       }
-      downBtn.addEventListener("click", (): void => {
+      downBtn.addEventListener('click', (): void => {
         clearError();
         if (index >= currentRelays.length - 1) return;
         const reordered: string[] = [...currentRelays];
@@ -177,23 +203,30 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         renderRelayList();
       });
 
-      const editBtn: HTMLButtonElement = document.createElement("button");
-      editBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors";
-      editBtn.textContent = "✎";
-      editBtn.title = "Edit relay";
-      editBtn.setAttribute("aria-label", "Edit relay");
-      editBtn.addEventListener("click", (): void => {
+      const editBtn: HTMLButtonElement = document.createElement('button');
+      editBtn.className =
+        'px-3 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors';
+      editBtn.textContent = '✎';
+      editBtn.title = 'Edit relay';
+      editBtn.setAttribute('aria-label', 'Edit relay');
+      editBtn.addEventListener('click', (): void => {
         clearError();
-        const updatedRaw: string | null = window.prompt("Edit relay URL:", relayUrl);
+        const updatedRaw: string | null = window.prompt(
+          'Edit relay URL:',
+          relayUrl,
+        );
         if (updatedRaw === null) return;
         const normalized: string | null = options.normalizeRelayUrl(updatedRaw);
         if (!normalized) {
-          setError("Invalid relay URL. Use ws:// or wss://");
+          setError('Invalid relay URL. Use ws:// or wss://');
           return;
         }
-        const isDuplicate: boolean = currentRelays.some((url: string, i: number): boolean => url === normalized && i !== index);
+        const isDuplicate: boolean = currentRelays.some(
+          (url: string, i: number): boolean =>
+            url === normalized && i !== index,
+        );
         if (isDuplicate) {
-          setError("This relay is already in the list.");
+          setError('This relay is already in the list.');
           return;
         }
         currentRelays[index] = normalized;
@@ -202,14 +235,17 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         renderRelayList();
       });
 
-      const deleteBtn: HTMLButtonElement = document.createElement("button");
-      deleteBtn.className = "px-3 py-1 text-xs font-semibold rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors";
-      deleteBtn.textContent = "🗑";
-      deleteBtn.title = "Delete relay";
-      deleteBtn.setAttribute("aria-label", "Delete relay");
-      deleteBtn.addEventListener("click", (): void => {
+      const deleteBtn: HTMLButtonElement = document.createElement('button');
+      deleteBtn.className =
+        'px-3 py-1 text-xs font-semibold rounded bg-red-100 text-red-700 hover:bg-red-200 transition-colors';
+      deleteBtn.textContent = '🗑';
+      deleteBtn.title = 'Delete relay';
+      deleteBtn.setAttribute('aria-label', 'Delete relay');
+      deleteBtn.addEventListener('click', (): void => {
         clearError();
-        currentRelays = currentRelays.filter((_: string, i: number): boolean => i !== index);
+        currentRelays = currentRelays.filter(
+          (_: string, i: number): boolean => i !== index,
+        );
         options.setRelays(currentRelays);
         options.onRelaysChanged();
         renderRelayList();
@@ -233,74 +269,79 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
     relayStatusSockets.push(socket);
 
     const timeoutId = window.setTimeout((): void => {
-      statusEl.className = "text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700";
-      statusEl.textContent = "Timeout";
+      statusEl.className =
+        'text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700';
+      statusEl.textContent = 'Timeout';
       socket.close();
     }, 5000);
     relayStatusTimeouts.push(timeoutId);
 
     socket.onopen = (): void => {
       clearTimeout(timeoutId);
-      statusEl.className = "text-xs font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-700";
-      statusEl.textContent = "Online";
+      statusEl.className =
+        'text-xs font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-700';
+      statusEl.textContent = 'Online';
       socket.close();
     };
 
     socket.onerror = (): void => {
       clearTimeout(timeoutId);
-      statusEl.className = "text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700";
-      statusEl.textContent = "Offline";
+      statusEl.className =
+        'text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700';
+      statusEl.textContent = 'Offline';
       socket.close();
     };
   }
 
   if (relayAddButton) {
-    relayAddButton.setAttribute("title", "Add relay");
-    relayAddButton.setAttribute("aria-label", "Add relay");
-    relayAddButton.addEventListener("click", (): void => {
+    relayAddButton.setAttribute('title', 'Add relay');
+    relayAddButton.setAttribute('aria-label', 'Add relay');
+    relayAddButton.addEventListener('click', (): void => {
       clearError();
       if (!relayInput) return;
-      const normalized: string | null = options.normalizeRelayUrl(relayInput.value);
+      const normalized: string | null = options.normalizeRelayUrl(
+        relayInput.value,
+      );
       if (!normalized) {
-        setError("Invalid relay URL. Use ws:// or wss://");
+        setError('Invalid relay URL. Use ws:// or wss://');
         return;
       }
       if (currentRelays.includes(normalized)) {
-        setError("This relay is already in the list.");
+        setError('This relay is already in the list.');
         return;
       }
       currentRelays = [...currentRelays, normalized];
       options.setRelays(currentRelays);
       options.onRelaysChanged();
-      relayInput.value = "";
+      relayInput.value = '';
       renderRelayList();
     });
   }
 
   if (relayInput) {
-    relayInput.addEventListener("keypress", (e: KeyboardEvent): void => {
-      if (e.key === "Enter" && relayAddButton) {
+    relayInput.addEventListener('keypress', (e: KeyboardEvent): void => {
+      if (e.key === 'Enter' && relayAddButton) {
         relayAddButton.click();
       }
     });
   }
 
   if (broadcastButton) {
-    broadcastButton.addEventListener("click", async (): Promise<void> => {
+    broadcastButton.addEventListener('click', async (): Promise<void> => {
       if (!options.onBroadcastRequested) {
         return;
       }
       broadcastButton.disabled = true;
-      broadcastButton.classList.add("opacity-60", "cursor-not-allowed");
+      broadcastButton.classList.add('opacity-60', 'cursor-not-allowed');
       if (broadcastStatus) {
-        broadcastStatus.textContent = "Broadcasting posts...";
-        broadcastStatus.className = "text-xs text-gray-600";
+        broadcastStatus.textContent = 'Broadcasting posts...';
+        broadcastStatus.className = 'text-xs text-gray-600';
       }
       try {
         await options.onBroadcastRequested();
       } finally {
         broadcastButton.disabled = false;
-        broadcastButton.classList.remove("opacity-60", "cursor-not-allowed");
+        broadcastButton.classList.remove('opacity-60', 'cursor-not-allowed');
       }
     });
   }

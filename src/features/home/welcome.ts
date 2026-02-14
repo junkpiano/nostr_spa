@@ -1,4 +1,4 @@
-import type { PubkeyHex } from "../../../types/nostr";
+import type { PubkeyHex } from '../../../types/nostr';
 
 interface ShowInputFormOptions {
   output: HTMLElement | null;
@@ -10,15 +10,18 @@ interface ShowInputFormOptions {
   handleRoute: () => void;
 }
 
-export async function showInputForm(options: ShowInputFormOptions): Promise<void> {
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+export async function showInputForm(
+  options: ShowInputFormOptions,
+): Promise<void> {
+  const postsHeader: HTMLElement | null =
+    document.getElementById('posts-header');
   if (postsHeader) {
-    postsHeader.style.display = "none";
+    postsHeader.style.display = 'none';
   }
 
   if (options.profileSection) {
-    options.profileSection.innerHTML = "";
-    options.profileSection.className = "";
+    options.profileSection.innerHTML = '';
+    options.profileSection.className = '';
   }
 
   if (!options.output) {
@@ -52,78 +55,88 @@ export async function showInputForm(options: ShowInputFormOptions): Promise<void
       </div>
     `;
 
-  const welcomeLoginBtn: HTMLElement | null = document.getElementById("welcome-login");
-  const welcomeGlobalBtn: HTMLElement | null = document.getElementById("welcome-global");
-  const privateKeyLoginBtn: HTMLElement | null = document.getElementById("private-key-login");
-  const privateKeyInput: HTMLInputElement | null = document.getElementById("private-key-input") as HTMLInputElement;
+  const welcomeLoginBtn: HTMLElement | null =
+    document.getElementById('welcome-login');
+  const welcomeGlobalBtn: HTMLElement | null =
+    document.getElementById('welcome-global');
+  const privateKeyLoginBtn: HTMLElement | null =
+    document.getElementById('private-key-login');
+  const privateKeyInput: HTMLInputElement | null = document.getElementById(
+    'private-key-input',
+  ) as HTMLInputElement;
 
   if (welcomeLoginBtn) {
-    welcomeLoginBtn.addEventListener("click", async (): Promise<void> => {
+    welcomeLoginBtn.addEventListener('click', async (): Promise<void> => {
       try {
         if (!(window as any).nostr) {
-          alert("No Nostr extension found!\n\nPlease install a Nostr browser extension like:\n- Alby (getalby.com)\n- nos2x\n- Flamingo\n\nThen reload this page.");
+          alert(
+            'No Nostr extension found!\n\nPlease install a Nostr browser extension like:\n- Alby (getalby.com)\n- nos2x\n- Flamingo\n\nThen reload this page.',
+          );
           return;
         }
 
         const pubkeyHex: string = await (window as any).nostr.getPublicKey();
         if (!pubkeyHex) {
-          alert("Failed to get public key from extension.");
+          alert('Failed to get public key from extension.');
           return;
         }
 
-        localStorage.setItem("nostr_pubkey", pubkeyHex);
+        localStorage.setItem('nostr_pubkey', pubkeyHex);
         options.clearSessionPrivateKey();
         options.updateLogoutButton(options.composeButton);
-        window.history.pushState(null, "", "/home");
+        window.history.pushState(null, '', '/home');
         options.handleRoute();
       } catch (error: unknown) {
-        console.error("Extension login error:", error);
+        console.error('Extension login error:', error);
         if (error instanceof Error) {
           alert(`Failed to connect with extension: ${error.message}`);
         } else {
-          alert("Failed to connect with extension. Please make sure your extension is unlocked and try again.");
+          alert(
+            'Failed to connect with extension. Please make sure your extension is unlocked and try again.',
+          );
         }
       }
     });
   }
 
   if (welcomeGlobalBtn) {
-    welcomeGlobalBtn.addEventListener("click", (): void => {
-      window.history.pushState(null, "", "/global");
+    welcomeGlobalBtn.addEventListener('click', (): void => {
+      window.history.pushState(null, '', '/global');
       options.handleRoute();
     });
   }
 
   if (privateKeyLoginBtn) {
-    privateKeyLoginBtn.addEventListener("click", (): void => {
+    privateKeyLoginBtn.addEventListener('click', (): void => {
       try {
         if (!privateKeyInput) return;
         const rawKey: string = privateKeyInput.value.trim();
         if (!rawKey) {
-          alert("Please enter your private key.");
+          alert('Please enter your private key.');
           return;
         }
-        const pubkeyHex: PubkeyHex = options.setSessionPrivateKeyFromRaw(rawKey);
-        localStorage.setItem("nostr_pubkey", pubkeyHex);
-        privateKeyInput.value = "";
+        const pubkeyHex: PubkeyHex =
+          options.setSessionPrivateKeyFromRaw(rawKey);
+        localStorage.setItem('nostr_pubkey', pubkeyHex);
+        privateKeyInput.value = '';
         options.updateLogoutButton(options.composeButton);
-        window.history.pushState(null, "", "/home");
+        window.history.pushState(null, '', '/home');
         options.handleRoute();
       } catch (error: unknown) {
-        console.error("Private key login error:", error);
+        console.error('Private key login error:', error);
         options.clearSessionPrivateKey();
         if (error instanceof Error) {
           alert(`Failed to use private key: ${error.message}`);
         } else {
-          alert("Failed to use private key.");
+          alert('Failed to use private key.');
         }
       }
     });
   }
 
   if (privateKeyInput) {
-    privateKeyInput.addEventListener("keypress", (e: KeyboardEvent): void => {
-      if (e.key === "Enter" && privateKeyLoginBtn) {
+    privateKeyInput.addEventListener('keypress', (e: KeyboardEvent): void => {
+      if (e.key === 'Enter' && privateKeyLoginBtn) {
         privateKeyLoginBtn.click();
       }
     });

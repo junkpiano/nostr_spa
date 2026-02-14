@@ -1,6 +1,6 @@
-import { fetchFollowList } from "../../common/events-queries.js";
-import { loadHomeTimeline } from "./home-timeline.js";
-import type { PubkeyHex } from "../../../types/nostr";
+import type { PubkeyHex } from '../../../types/nostr';
+import { fetchFollowList } from '../../common/events-queries.js';
+import { loadHomeTimeline } from './home-timeline.js';
 
 interface LoadUserHomeTimelineOptions {
   pubkeyHex: PubkeyHex;
@@ -15,12 +15,17 @@ interface LoadUserHomeTimelineOptions {
   activeTimeouts: number[];
   setUntilTimestamp: (value: number) => void;
   setNewestEventTimestamp: (value: number) => void;
-  setCachedHomeTimeline: (followedWithSelf: PubkeyHex[], seen: Set<string>) => void;
+  setCachedHomeTimeline: (
+    followedWithSelf: PubkeyHex[],
+    seen: Set<string>,
+  ) => void;
   startBackgroundFetch: (followedWithSelf: PubkeyHex[]) => void;
   isRouteActive?: () => boolean;
 }
 
-export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions): Promise<void> {
+export async function loadUserHomeTimeline(
+  options: LoadUserHomeTimelineOptions,
+): Promise<void> {
   try {
     const isRouteActive: () => boolean = options.isRouteActive || (() => true);
     if (!isRouteActive()) {
@@ -36,22 +41,28 @@ export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions)
       `;
     }
 
-    const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+    const postsHeader: HTMLElement | null =
+      document.getElementById('posts-header');
     if (postsHeader) {
-      postsHeader.textContent = "Home Timeline";
-      postsHeader.style.display = "";
+      postsHeader.textContent = 'Home Timeline';
+      postsHeader.style.display = '';
     }
 
     if (options.profileSection) {
-      options.profileSection.innerHTML = "";
-      options.profileSection.className = "";
+      options.profileSection.innerHTML = '';
+      options.profileSection.className = '';
     }
 
-    const followedPubkeys: PubkeyHex[] = await fetchFollowList(options.pubkeyHex, options.relays);
+    const followedPubkeys: PubkeyHex[] = await fetchFollowList(
+      options.pubkeyHex,
+      options.relays,
+    );
     if (!isRouteActive()) {
       return;
     }
-    const followedWithSelf: PubkeyHex[] = Array.from(new Set([...followedPubkeys, options.pubkeyHex]));
+    const followedWithSelf: PubkeyHex[] = Array.from(
+      new Set([...followedPubkeys, options.pubkeyHex]),
+    );
 
     if (options.output) {
       options.output.innerHTML = `
@@ -89,8 +100,8 @@ export async function loadUserHomeTimeline(options: LoadUserHomeTimelineOptions)
       options.startBackgroundFetch(followedWithSelf);
     }
   } catch (error: unknown) {
-    console.error("Error loading home timeline:", error);
-    localStorage.removeItem("nostr_pubkey");
+    console.error('Error loading home timeline:', error);
+    localStorage.removeItem('nostr_pubkey');
 
     if (options.output) {
       options.output.innerHTML = `

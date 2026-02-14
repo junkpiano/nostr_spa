@@ -3,12 +3,12 @@
 
 const SW_VERSION = 'v1.0.0';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const CACHE_NAME = 'nostr-app-v1';
+const _CACHE_NAME = 'nostr-app-v1';
 
 console.log('[ServiceWorker] Initializing', SW_VERSION);
 
 // Installation
-self.addEventListener('install', (event) => {
+self.addEventListener('install', (_event) => {
   console.log('[ServiceWorker] Installing');
   // Skip waiting to activate immediately
   self.skipWaiting();
@@ -84,7 +84,7 @@ async function performBackgroundSync() {
       const result = await syncTimelineViaFetch(
         'home',
         syncConfig.userPubkey,
-        syncConfig.followedPubkeys
+        syncConfig.followedPubkeys,
       );
 
       if (result.success && result.newEventCount > 0) {
@@ -121,7 +121,7 @@ async function handleTimelineSync(payload, source) {
     const result = await syncTimelineViaFetch(
       payload.timelineType,
       payload.userPubkey,
-      payload.followedPubkeys
+      payload.followedPubkeys,
     );
 
     source.postMessage({
@@ -159,7 +159,11 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
     const db = await openDB();
 
     // Get newest timestamp from timeline
-    const newestTimestamp = await getTimelineNewestTimestamp(db, timelineType, userPubkey);
+    const newestTimestamp = await getTimelineNewestTimestamp(
+      db,
+      timelineType,
+      userPubkey,
+    );
 
     if (!newestTimestamp) {
       console.log('[ServiceWorker] No cached timeline, skipping sync');
@@ -173,7 +177,7 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
       relays,
       newestTimestamp,
       timelineType,
-      followedPubkeys
+      followedPubkeys,
     );
 
     if (newEvents.length === 0) {
@@ -200,7 +204,9 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
     // If error is "Database not initialized", return success with 0 events
     // This is expected on first load before the main app initializes the database
     if (error.message === 'Database not initialized') {
-      console.log('[ServiceWorker] Database not initialized yet, skipping sync');
+      console.log(
+        '[ServiceWorker] Database not initialized yet, skipping sync',
+      );
       return {
         success: true,
         newEventCount: 0,
@@ -223,9 +229,13 @@ function openDB() {
     request.onsuccess = () => {
       const db = request.result;
       // Check if required object stores exist
-      if (!db.objectStoreNames.contains('timelines') ||
-          !db.objectStoreNames.contains('events')) {
-        console.warn('[ServiceWorker] Required object stores not found, database not initialized yet');
+      if (
+        !db.objectStoreNames.contains('timelines') ||
+        !db.objectStoreNames.contains('events')
+      ) {
+        console.warn(
+          '[ServiceWorker] Required object stores not found, database not initialized yet',
+        );
         db.close();
         reject(new Error('Database not initialized'));
         return;
@@ -257,7 +267,7 @@ async function getTimelineNewestTimestamp(db, type, pubkey) {
   });
 }
 
-async function getRelays(db) {
+async function getRelays(_db) {
   // Try to get relays from localStorage or use defaults
   try {
     const relaysJson = self.localStorage?.getItem('nostr_relays');
@@ -277,7 +287,12 @@ async function getRelays(db) {
   ];
 }
 
-async function fetchNewEventsFromRelays(relays, sinceTimestamp, timelineType, followedPubkeys) {
+async function fetchNewEventsFromRelays(
+  relays,
+  sinceTimestamp,
+  timelineType,
+  followedPubkeys,
+) {
   const events = [];
   const seenIds = new Set();
 
@@ -287,7 +302,11 @@ async function fetchNewEventsFromRelays(relays, sinceTimestamp, timelineType, fo
     since: sinceTimestamp,
   };
 
-  if (timelineType === 'home' && followedPubkeys && followedPubkeys.length > 0) {
+  if (
+    timelineType === 'home' &&
+    followedPubkeys &&
+    followedPubkeys.length > 0
+  ) {
     filter.authors = followedPubkeys;
   }
 
@@ -296,13 +315,13 @@ async function fetchNewEventsFromRelays(relays, sinceTimestamp, timelineType, fo
       const socket = new WebSocket(relayUrl);
 
       await new Promise((resolve) => {
-        let timeout = setTimeout(() => {
+        const timeout = setTimeout(() => {
           socket.close();
           resolve();
         }, 8000);
 
         socket.onopen = () => {
-          const subId = 'sw-sync-' + Math.random().toString(36).slice(2);
+          const subId = `sw-sync-${Math.random().toString(36).slice(2)}`;
           socket.send(JSON.stringify(['REQ', subId, filter]));
         };
 
@@ -380,14 +399,14 @@ async function updateTimelineIndex(db, type, pubkey, events) {
       const timeline = request.result;
 
       if (timeline) {
-        const eventIds = events.map(e => e.id);
+        const eventIds = events.map((e) => e.id);
         const existingSet = new Set(timeline.eventIds);
-        const newEventIds = eventIds.filter(id => !existingSet.has(id));
+        const newEventIds = eventIds.filter((id) => !existingSet.has(id));
 
         timeline.eventIds = [...newEventIds, ...timeline.eventIds];
         timeline.newestTimestamp = Math.max(
           timeline.newestTimestamp,
-          ...events.map(e => e.created_at)
+          ...events.map((e) => e.created_at),
         );
         timeline.updatedAt = Date.now();
 

@@ -1,9 +1,9 @@
 import { finalizeEvent } from 'nostr-tools';
-import { createRelayWebSocket } from "../../common/relay-socket.js";
-import { recordRelayFailure } from "../relays/relays.js";
-import { fetchFollowList } from '../../common/events-queries.js';
-import { getSessionPrivateKey } from '../../common/session.js';
 import type { NostrEvent, PubkeyHex } from '../../../types/nostr';
+import { fetchFollowList } from '../../common/events-queries.js';
+import { createRelayWebSocket } from '../../common/relay-socket.js';
+import { getSessionPrivateKey } from '../../common/session.js';
+import { recordRelayFailure } from '../relays/relays.js';
 
 interface FollowToggleOptions {
   getRelays: () => string[];
@@ -15,7 +15,8 @@ export async function setupFollowToggle(
   targetPubkey: PubkeyHex,
   options: FollowToggleOptions,
 ): Promise<void> {
-  const container: HTMLElement | null = document.getElementById('follow-action');
+  const container: HTMLElement | null =
+    document.getElementById('follow-action');
   if (!container) return;
 
   const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
@@ -30,11 +31,13 @@ export async function setupFollowToggle(
     </button>
   `;
 
-  const button: HTMLButtonElement | null = document.getElementById('follow-toggle') as HTMLButtonElement;
+  const button: HTMLButtonElement | null = document.getElementById(
+    'follow-toggle',
+  ) as HTMLButtonElement;
   if (!button) return;
 
   const hasSigningCapability = (): boolean => {
-    const hasExtension: boolean = Boolean((window as any).nostr && (window as any).nostr.signEvent);
+    const hasExtension: boolean = Boolean((window as any).nostr?.signEvent);
     const hasPrivateKey: boolean = Boolean(getSessionPrivateKey());
     return hasExtension || hasPrivateKey;
   };
@@ -43,7 +46,10 @@ export async function setupFollowToggle(
   let followList: PubkeyHex[] = [];
 
   try {
-    followList = await fetchFollowList(storedPubkey as PubkeyHex, options.getRelays());
+    followList = await fetchFollowList(
+      storedPubkey as PubkeyHex,
+      options.getRelays(),
+    );
     isFollowing = followList.includes(targetPubkey);
   } catch (e) {
     console.warn('Failed to load follow list for toggle', e);
@@ -72,7 +78,9 @@ export async function setupFollowToggle(
 
   button.addEventListener('click', async (): Promise<void> => {
     if (!hasSigningCapability()) {
-      alert('Sign-in required to follow. Please log in with extension or private key.');
+      alert(
+        'Sign-in required to follow. Please log in with extension or private key.',
+      );
       return;
     }
 
@@ -80,7 +88,10 @@ export async function setupFollowToggle(
     button.classList.add('opacity-60', 'cursor-not-allowed');
 
     try {
-      followList = await fetchFollowList(storedPubkey as PubkeyHex, options.getRelays());
+      followList = await fetchFollowList(
+        storedPubkey as PubkeyHex,
+        options.getRelays(),
+      );
       const followSet: Set<PubkeyHex> = new Set(followList);
       if (isFollowing) {
         followSet.delete(targetPubkey);
@@ -100,7 +111,7 @@ export async function setupFollowToggle(
       };
 
       let signedEvent: NostrEvent;
-      if ((window as any).nostr && (window as any).nostr.signEvent) {
+      if ((window as any).nostr?.signEvent) {
         signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
       } else {
         const privateKey: Uint8Array | null = getSessionPrivateKey();

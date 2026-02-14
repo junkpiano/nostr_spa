@@ -1,29 +1,29 @@
-import type { NostrEvent, PubkeyHex } from "../../../types/nostr.js";
+import type { NostrEvent, PubkeyHex } from '../../../types/nostr.js';
 import {
   createTransaction,
+  isIndexedDBAvailable,
   requestToPromise,
   transactionToPromise,
-  isIndexedDBAvailable,
-} from "./indexeddb.js";
+} from './indexeddb.js';
 import {
-  STORE_NAMES,
-  LIMITS,
-  TTL,
   type CachedEvent,
   type EventQueryOptions,
-} from "./types.js";
+  LIMITS,
+  STORE_NAMES,
+  TTL,
+} from './types.js';
 
 /**
  * Stores a single event in the cache
  */
 export async function storeEvent(
   event: NostrEvent,
-  options?: { isHomeTimeline?: boolean }
+  options?: { isHomeTimeline?: boolean },
 ): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
 
     const cachedEvent: CachedEvent = {
@@ -39,7 +39,7 @@ export async function storeEvent(
     store.put(cachedEvent);
     await transactionToPromise(tx);
   } catch (error) {
-    console.error("[EventsStore] Failed to store event:", error);
+    console.error('[EventsStore] Failed to store event:', error);
   }
 }
 
@@ -48,12 +48,12 @@ export async function storeEvent(
  */
 export async function storeEvents(
   events: NostrEvent[],
-  options?: { isHomeTimeline?: boolean }
+  options?: { isHomeTimeline?: boolean },
 ): Promise<void> {
   if (!isIndexedDBAvailable() || events.length === 0) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
     const now = Date.now();
 
@@ -73,7 +73,7 @@ export async function storeEvents(
     await transactionToPromise(tx);
     console.log(`[EventsStore] Stored ${events.length} events`);
   } catch (error) {
-    console.error("[EventsStore] Failed to store events:", error);
+    console.error('[EventsStore] Failed to store events:', error);
   }
 }
 
@@ -84,11 +84,11 @@ export async function getEvent(eventId: string): Promise<NostrEvent | null> {
   if (!isIndexedDBAvailable()) return null;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
 
     const record = await requestToPromise<CachedEvent | undefined>(
-      store.get(eventId)
+      store.get(eventId),
     );
 
     if (!record) return null;
@@ -104,7 +104,7 @@ export async function getEvent(eventId: string): Promise<NostrEvent | null> {
 
     return record.event;
   } catch (error) {
-    console.error("[EventsStore] Failed to get event:", error);
+    console.error('[EventsStore] Failed to get event:', error);
     return null;
   }
 }
@@ -116,14 +116,14 @@ export async function getEvents(eventIds: string[]): Promise<NostrEvent[]> {
   if (!isIndexedDBAvailable() || eventIds.length === 0) return [];
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
     const now = Date.now();
     const events: NostrEvent[] = [];
 
     for (const id of eventIds) {
       const record = await requestToPromise<CachedEvent | undefined>(
-        store.get(id)
+        store.get(id),
       );
 
       if (!record) continue;
@@ -140,7 +140,7 @@ export async function getEvents(eventIds: string[]): Promise<NostrEvent[]> {
 
     return events;
   } catch (error) {
-    console.error("[EventsStore] Failed to get events:", error);
+    console.error('[EventsStore] Failed to get events:', error);
     return [];
   }
 }
@@ -149,12 +149,12 @@ export async function getEvents(eventIds: string[]): Promise<NostrEvent[]> {
  * Queries events with filters
  */
 export async function queryEvents(
-  options: EventQueryOptions = {}
+  options: EventQueryOptions = {},
 ): Promise<NostrEvent[]> {
   if (!isIndexedDBAvailable()) return [];
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readonly");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readonly');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
     const now = Date.now();
     const events: NostrEvent[] = [];
@@ -165,24 +165,24 @@ export async function queryEvents(
 
     if (options.authors && options.authors.length === 1) {
       // Query by specific author
-      const index = store.index("pubkey_created_at");
+      const index = store.index('pubkey_created_at');
       cursorSource = index;
       range = IDBKeyRange.bound(
         [options.authors[0], options.since ?? 0],
-        [options.authors[0], options.until ?? Date.now()]
+        [options.authors[0], options.until ?? Date.now()],
       );
     } else if (options.since || options.until) {
       // Query by timestamp
-      const index = store.index("created_at");
+      const index = store.index('created_at');
       cursorSource = index;
       range = IDBKeyRange.bound(
         options.since ?? 0,
-        options.until ?? Date.now()
+        options.until ?? Date.now(),
       );
     }
 
     return new Promise<NostrEvent[]>((resolve, reject) => {
-      const cursorRequest = cursorSource.openCursor(range, "prev"); // Newest first
+      const cursorRequest = cursorSource.openCursor(range, 'prev'); // Newest first
       let count = 0;
       const limit = options.limit ?? Infinity;
       const offset = options.offset ?? 0;
@@ -234,7 +234,7 @@ export async function queryEvents(
       cursorRequest.onerror = (): void => reject(cursorRequest.error);
     });
   } catch (error) {
-    console.error("[EventsStore] Failed to query events:", error);
+    console.error('[EventsStore] Failed to query events:', error);
     return [];
   }
 }
@@ -246,11 +246,11 @@ export async function countEvents(): Promise<number> {
   if (!isIndexedDBAvailable()) return 0;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readonly");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readonly');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
     return await requestToPromise<number>(store.count());
   } catch (error) {
-    console.error("[EventsStore] Failed to count events:", error);
+    console.error('[EventsStore] Failed to count events:', error);
     return 0;
   }
 }
@@ -262,7 +262,7 @@ export async function countProtectedEvents(): Promise<number> {
   if (!isIndexedDBAvailable()) return 0;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readonly");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readonly');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
 
     return new Promise<number>((resolve, reject) => {
@@ -287,7 +287,7 @@ export async function countProtectedEvents(): Promise<number> {
       };
     });
   } catch (error) {
-    console.error("[EventsStore] Failed to count protected events:", error);
+    console.error('[EventsStore] Failed to count protected events:', error);
     return 0;
   }
 }
@@ -304,9 +304,9 @@ export async function pruneEvents(): Promise<number> {
       return 0; // No pruning needed
     }
 
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
-    const index = store.index("storedAt");
+    const index = store.index('storedAt');
 
     const toDelete = count - LIMITS.EVENTS_PRUNE_TO;
     let deleted = 0;
@@ -336,7 +336,7 @@ export async function pruneEvents(): Promise<number> {
       cursorRequest.onerror = (): void => reject(cursorRequest.error);
     });
   } catch (error) {
-    console.error("[EventsStore] Failed to prune events:", error);
+    console.error('[EventsStore] Failed to prune events:', error);
     return 0;
   }
 }
@@ -348,12 +348,12 @@ export async function clearEvents(): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
     await requestToPromise(store.clear());
-    console.log("[EventsStore] Cleared all events");
+    console.log('[EventsStore] Cleared all events');
   } catch (error) {
-    console.error("[EventsStore] Failed to clear events:", error);
+    console.error('[EventsStore] Failed to clear events:', error);
   }
 }
 
@@ -364,7 +364,7 @@ export async function deleteEvents(eventIds: string[]): Promise<void> {
   if (!isIndexedDBAvailable() || eventIds.length === 0) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.EVENTS, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.EVENTS, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.EVENTS);
 
     for (const id of eventIds) {
@@ -374,7 +374,7 @@ export async function deleteEvents(eventIds: string[]): Promise<void> {
     await transactionToPromise(tx);
     console.log(`[EventsStore] Deleted ${eventIds.length} events`);
   } catch (error) {
-    console.error("[EventsStore] Failed to delete events:", error);
+    console.error('[EventsStore] Failed to delete events:', error);
   }
 }
 
@@ -383,7 +383,7 @@ export async function deleteEvents(eventIds: string[]): Promise<void> {
  */
 export async function getEventsByAuthor(
   pubkey: PubkeyHex,
-  options?: { limit?: number; until?: number }
+  options?: { limit?: number; until?: number },
 ): Promise<NostrEvent[]> {
   return queryEvents({
     authors: [pubkey],

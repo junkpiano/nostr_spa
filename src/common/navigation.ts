@@ -45,18 +45,30 @@ export function setActiveNav(
 
 export function setupNavigation(options: NavigationOptions): void {
   const homeButton: HTMLElement | null = document.getElementById('nav-home');
-  const globalButton: HTMLElement | null = document.getElementById('nav-global');
-  const notificationsButton: HTMLElement | null = document.getElementById('nav-notifications');
-  const relaysButton: HTMLElement | null = document.getElementById('nav-relays');
-  const settingsButton: HTMLElement | null = document.getElementById('nav-settings');
+  const globalButton: HTMLElement | null =
+    document.getElementById('nav-global');
+  const notificationsButton: HTMLElement | null =
+    document.getElementById('nav-notifications');
+  const relaysButton: HTMLElement | null =
+    document.getElementById('nav-relays');
+  const settingsButton: HTMLElement | null =
+    document.getElementById('nav-settings');
   const aboutButton: HTMLElement | null = document.getElementById('nav-about');
-  const logoutButton: HTMLElement | null = document.getElementById('nav-logout');
-  const mobileMenuButton: HTMLElement | null = document.getElementById('mobile-menu-button');
+  const logoutButton: HTMLElement | null =
+    document.getElementById('nav-logout');
+  const mobileMenuButton: HTMLElement | null =
+    document.getElementById('mobile-menu-button');
   const sidebar: HTMLElement | null = document.getElementById('sidebar');
-  const searchMobileButton: HTMLElement | null = document.getElementById('nav-search-mobile');
-  const searchOverlay: HTMLElement | null = document.getElementById('search-overlay');
-  const searchOverlayClose: HTMLElement | null = document.getElementById('search-overlay-close');
-  const searchOverlayBackdrop: HTMLElement | null = document.getElementById('search-overlay-backdrop');
+  const searchMobileButton: HTMLElement | null =
+    document.getElementById('nav-search-mobile');
+  const searchOverlay: HTMLElement | null =
+    document.getElementById('search-overlay');
+  const searchOverlayClose: HTMLElement | null = document.getElementById(
+    'search-overlay-close',
+  );
+  const searchOverlayBackdrop: HTMLElement | null = document.getElementById(
+    'search-overlay-backdrop',
+  );
 
   // Mobile menu toggle
   let isMobileMenuOpen = false;
@@ -64,7 +76,16 @@ export function setupNavigation(options: NavigationOptions): void {
   const closeMobileMenu = (): void => {
     if (sidebar) {
       sidebar.classList.add('hidden');
-      sidebar.classList.remove('fixed', 'inset-0', 'z-50', 'bg-black/50', 'flex', 'items-start', 'pt-20', 'px-4');
+      sidebar.classList.remove(
+        'fixed',
+        'inset-0',
+        'z-50',
+        'bg-black/50',
+        'flex',
+        'items-start',
+        'pt-20',
+        'px-4',
+      );
       const sidebarContent = sidebar.querySelector('div');
       if (sidebarContent) {
         sidebarContent.classList.remove('w-full', 'max-w-sm');
@@ -76,7 +97,16 @@ export function setupNavigation(options: NavigationOptions): void {
   const openMobileMenu = (): void => {
     if (sidebar) {
       sidebar.classList.remove('hidden');
-      sidebar.classList.add('fixed', 'inset-0', 'z-50', 'bg-black/50', 'flex', 'items-start', 'pt-20', 'px-4');
+      sidebar.classList.add(
+        'fixed',
+        'inset-0',
+        'z-50',
+        'bg-black/50',
+        'flex',
+        'items-start',
+        'pt-20',
+        'px-4',
+      );
       const sidebarContent = sidebar.querySelector('div');
       if (sidebarContent) {
         sidebarContent.classList.add('w-full', 'max-w-sm');
@@ -113,53 +143,74 @@ export function setupNavigation(options: NavigationOptions): void {
   };
 
   if (homeButton) {
-    homeButton.addEventListener('click', wrapNavigationHandler((): void => {
-      window.history.pushState(null, '', '/home');
-      options.handleRoute();
-    }));
+    homeButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        window.history.pushState(null, '', '/home');
+        options.handleRoute();
+      }),
+    );
   }
 
   if (globalButton) {
-    globalButton.addEventListener('click', wrapNavigationHandler((): void => {
-      window.history.pushState(null, '', '/global');
-      options.handleRoute();
-    }));
+    globalButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        window.history.pushState(null, '', '/global');
+        options.handleRoute();
+      }),
+    );
   }
 
   if (notificationsButton) {
-    notificationsButton.addEventListener('click', wrapNavigationHandler((): void => {
-      window.history.pushState(null, '', '/notifications');
-      options.handleRoute();
-    }));
+    notificationsButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        window.history.pushState(null, '', '/notifications');
+        options.handleRoute();
+      }),
+    );
   }
 
   if (relaysButton) {
-    relaysButton.addEventListener('click', wrapNavigationHandler((): void => {
-      window.history.pushState(null, '', '/relays');
-      options.handleRoute();
-    }));
+    relaysButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        window.history.pushState(null, '', '/relays');
+        options.handleRoute();
+      }),
+    );
   }
 
   if (settingsButton) {
-    settingsButton.addEventListener('click', wrapNavigationHandler((): void => {
-      window.history.pushState(null, '', '/settings');
-      options.handleRoute();
-    }));
+    settingsButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        window.history.pushState(null, '', '/settings');
+        options.handleRoute();
+      }),
+    );
   }
 
   if (aboutButton) {
-    aboutButton.addEventListener('click', wrapNavigationHandler((): void => {
-      window.history.pushState(null, '', '/about');
-      options.handleRoute();
-    }));
+    aboutButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        window.history.pushState(null, '', '/about');
+        options.handleRoute();
+      }),
+    );
   }
 
   if (logoutButton) {
-    logoutButton.addEventListener('click', wrapNavigationHandler((): void => {
-      options.onLogout();
-      window.history.pushState(null, '', '/home');
-      options.handleRoute();
-    }));
+    logoutButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        options.onLogout();
+        window.history.pushState(null, '', '/home');
+        options.handleRoute();
+      }),
+    );
   }
 
   // Mobile search overlay

@@ -1,6 +1,12 @@
-import { recordRelayFailure, recordRelaySuccess } from '../features/relays/relays.js';
+import {
+  recordRelayFailure,
+  recordRelaySuccess,
+} from '../features/relays/relays.js';
 
-export function createRelayWebSocket(relayUrl: string, trackHealth: boolean = true): WebSocket {
+export function createRelayWebSocket(
+  relayUrl: string,
+  trackHealth: boolean = true,
+): WebSocket {
   const socket: WebSocket = new WebSocket(relayUrl);
   if (trackHealth) {
     socket.addEventListener('open', (): void => {

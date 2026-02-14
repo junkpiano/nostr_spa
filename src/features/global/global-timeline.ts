@@ -1,20 +1,25 @@
 import { nip19 } from 'nostr-tools';
-import type { EventPacket, ConnectionStatePacket } from 'rx-nostr';
+import type { ConnectionStatePacket, EventPacket } from 'rx-nostr';
 import type { Subscription } from 'rxjs';
-import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
-import { fetchProfile } from "../profile/profile.js";
-import { renderEvent } from "../../common/event-render.js";
-import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
-import { getRxNostr, createBackwardReq } from "../relays/rx-nostr-client.js";
-import { getRelays } from "../relays/relays.js";
-import type { NostrProfile, Npub, NostrEvent, PubkeyHex } from "../../../types/nostr";
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  PubkeyHex,
+} from '../../../types/nostr';
 import {
-  getCachedTimeline,
-  storeEvents,
-  prependEventsToTimeline,
   appendEventsToTimeline,
-  getProfile as getCachedProfile
-} from "../../common/db/index.js";
+  getProfile as getCachedProfile,
+  getCachedTimeline,
+  prependEventsToTimeline,
+  storeEvents,
+} from '../../common/db/index.js';
+import { renderEvent } from '../../common/event-render.js';
+import { fetchingProfiles, profileCache } from '../../common/timeline-cache.js';
+import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
+import { fetchProfile } from '../profile/profile.js';
+import { getRelays } from '../relays/relays.js';
+import { createBackwardReq, getRxNostr } from '../relays/rx-nostr-client.js';
 
 export async function loadGlobalTimeline(
   _relays: string[],
@@ -32,7 +37,7 @@ export async function loadGlobalTimeline(
   if (!routeIsActive()) {
     return;
   }
-  const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
+  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
   let clearedPlaceholder: boolean = false;
   const bufferedEvents: NostrEvent[] = [];
   const renderedEventIds: Set<string> = new Set();
@@ -46,7 +51,9 @@ export async function loadGlobalTimeline(
 
   if (isInitialLoad) {
     try {
-      const cached = await getCachedTimeline("global", undefined, { limit: 50 });
+      const cached = await getCachedTimeline('global', undefined, {
+        limit: 50,
+      });
       const cacheAgeMinutes = cached.hasCache
         ? Math.floor((Date.now() / 1000 - cached.newestTimestamp) / 60)
         : 0;
@@ -56,34 +63,41 @@ export async function loadGlobalTimeline(
       const isCacheStale = cacheAgeMinutes > CACHE_MAX_AGE_MINUTES;
 
       if (cached.hasCache && cached.events.length > 0) {
-        console.log(`[GlobalTimeline] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`);
+        console.log(
+          `[GlobalTimeline] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`,
+        );
 
         if (isCacheStale) {
-          console.log(`[GlobalTimeline] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`);
+          console.log(
+            `[GlobalTimeline] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`,
+          );
           // Don't display stale cache, go straight to fresh relay fetch
         } else {
           if (!routeIsActive()) return; // Guard before DOM update
           clearedPlaceholder = true;
-          output.innerHTML = "";
+          output.innerHTML = '';
 
           // Check route once before loop to avoid partial state updates
           if (routeIsActive()) {
             for (const event of cached.events) {
-              if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
+              if (
+                renderedEventIds.has(event.id) ||
+                seenEventIds.has(event.id)
+              ) {
                 continue;
               }
               renderedEventIds.add(event.id);
               seenEventIds.add(event.id);
 
-          let profile: NostrProfile | null = null;
-          if (profileCache.has(event.pubkey)) {
-            profile = profileCache.get(event.pubkey) || null;
-          } else {
-            profile = await getCachedProfile(event.pubkey as PubkeyHex);
-            if (profile) {
-              profileCache.set(event.pubkey, profile);
-            }
-          }
+              let profile: NostrProfile | null = null;
+              if (profileCache.has(event.pubkey)) {
+                profile = profileCache.get(event.pubkey) || null;
+              } else {
+                profile = await getCachedProfile(event.pubkey as PubkeyHex);
+                if (profile) {
+                  profileCache.set(event.pubkey, profile);
+                }
+              }
 
               const npubStr: Npub = nip19.npubEncode(event.pubkey);
               renderEvent(event, profile, npubStr, event.pubkey, output);
@@ -91,7 +105,7 @@ export async function loadGlobalTimeline(
           }
 
           if (connectingMsg) {
-            connectingMsg.style.display = "none";
+            connectingMsg.style.display = 'none';
           }
 
           // IMPORTANT: Don't update untilTimestamp from cache on initial load
@@ -100,18 +114,18 @@ export async function loadGlobalTimeline(
         }
       }
     } catch (error) {
-      console.error("[GlobalTimeline] Failed to load from cache:", error);
+      console.error('[GlobalTimeline] Failed to load from cache:', error);
     }
   }
   // === End cache-first loading ===
 
   if (connectingMsg && !clearedPlaceholder) {
-    connectingMsg.style.display = ""; // Show connecting message
+    connectingMsg.style.display = ''; // Show connecting message
   }
 
   if (loadMoreBtn) {
     (loadMoreBtn as HTMLButtonElement).disabled = true;
-    loadMoreBtn.classList.add("opacity-50", "cursor-not-allowed");
+    loadMoreBtn.classList.add('opacity-50', 'cursor-not-allowed');
   }
 
   // Use rx-nostr to fetch events
@@ -139,14 +153,16 @@ export async function loadGlobalTimeline(
   });
 
   let newEventsFromRelay: number = 0;
-  const connectionSub: Subscription = rxNostr.createConnectionStateObservable().subscribe({
-    next: (state: ConnectionStatePacket): void => {
-      console.log(`[GlobalTimeline] Relay ${state.from}:`, state.state);
-      if (state.state === 'connected') {
-        relayConnectionCount++;
-      }
-    },
-  });
+  const connectionSub: Subscription = rxNostr
+    .createConnectionStateObservable()
+    .subscribe({
+      next: (state: ConnectionStatePacket): void => {
+        console.log(`[GlobalTimeline] Relay ${state.from}:`, state.state);
+        if (state.state === 'connected') {
+          relayConnectionCount++;
+        }
+      },
+    });
   console.log('[GlobalTimeline] Starting subscription for relays:', relays);
   const subscription = rxNostr.use(req, { relays }).subscribe({
     next: (packet: EventPacket) => {
@@ -159,14 +175,19 @@ export async function loadGlobalTimeline(
       eventsReceivedCount++;
       const event: NostrEvent = packet.event;
       const eventAge = Math.floor((Date.now() / 1000 - event.created_at) / 60); // minutes ago
-      console.log(`[GlobalTimeline] Event #${eventsReceivedCount} from ${packet.from}:`, {
-        eventId: event.id.slice(0, 8),
-        kind: event.kind,
-        age: `${eventAge}m ago`,
-      });
+      console.log(
+        `[GlobalTimeline] Event #${eventsReceivedCount} from ${packet.from}:`,
+        {
+          eventId: event.id.slice(0, 8),
+          kind: event.kind,
+          age: `${eventAge}m ago`,
+        },
+      );
 
       if (seenEventIds.has(event.id)) {
-        console.log(`[GlobalTimeline] Skipping duplicate event ${event.id.slice(0, 8)}`);
+        console.log(
+          `[GlobalTimeline] Skipping duplicate event ${event.id.slice(0, 8)}`,
+        );
         return;
       }
       seenEventIds.add(event.id);
@@ -177,17 +198,21 @@ export async function loadGlobalTimeline(
 
       if (!clearedPlaceholder) {
         if (!routeIsActive()) return;
-        output.innerHTML = "";
+        output.innerHTML = '';
         clearedPlaceholder = true;
       }
 
       if (connectingMsg) {
-        connectingMsg.style.display = "none";
+        connectingMsg.style.display = 'none';
       }
 
       // Fetch profile for this event's author if not cached
-      let profile: NostrProfile | null = profileCache.get(event.pubkey) || null;
-      if (!profileCache.has(event.pubkey) && !fetchingProfiles.has(event.pubkey)) {
+      const profile: NostrProfile | null =
+        profileCache.get(event.pubkey) || null;
+      if (
+        !profileCache.has(event.pubkey) &&
+        !fetchingProfiles.has(event.pubkey)
+      ) {
         fetchingProfiles.add(event.pubkey);
         fetchProfile(event.pubkey, relays, {
           usePersistentCache: false,
@@ -199,18 +224,24 @@ export async function loadGlobalTimeline(
             fetchingProfiles.delete(event.pubkey);
 
             // Update rendered event with fetched profile
-            const eventElements: NodeListOf<Element> = output.querySelectorAll(".event-container");
+            const eventElements: NodeListOf<Element> =
+              output.querySelectorAll('.event-container');
             eventElements.forEach((el: Element): void => {
               if ((el as HTMLElement).dataset.pubkey === event.pubkey) {
-                const nameEl: Element | null = el.querySelector(".event-username");
-                const avatarEl: Element | null = el.querySelector(".event-avatar");
+                const nameEl: Element | null =
+                  el.querySelector('.event-username');
+                const avatarEl: Element | null =
+                  el.querySelector('.event-avatar');
                 if (fetchedProfile) {
                   if (nameEl) {
                     const npubStr: Npub = nip19.npubEncode(event.pubkey);
                     nameEl.textContent = `👤 ${getDisplayName(npubStr, fetchedProfile)}`;
                   }
                   if (avatarEl) {
-                    (avatarEl as HTMLImageElement).src = getAvatarURL(event.pubkey, fetchedProfile);
+                    (avatarEl as HTMLImageElement).src = getAvatarURL(
+                      event.pubkey,
+                      fetchedProfile,
+                    );
                   }
                 }
               }
@@ -237,11 +268,11 @@ export async function loadGlobalTimeline(
       });
       connectionSub.unsubscribe();
       if (connectingMsg) {
-        connectingMsg.style.display = "none";
+        connectingMsg.style.display = 'none';
       }
       if (loadMoreBtn) {
         (loadMoreBtn as HTMLButtonElement).disabled = false;
-        loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+        loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       }
     },
     complete: () => {
@@ -253,7 +284,7 @@ export async function loadGlobalTimeline(
         relaysUsed: relays.length,
       });
       connectionSub.unsubscribe();
-    }
+    },
   });
 
   // Emit filter AFTER subscribe — rx-nostr uses a regular Subject, not ReplaySubject,
@@ -275,7 +306,7 @@ export async function loadGlobalTimeline(
     // === PHASE 2: Store fetched events to cache ===
     if (bufferedEvents.length > 0) {
       storeEvents(bufferedEvents, { isHomeTimeline: false }).catch((error) => {
-        console.error("[GlobalTimeline] Failed to store events:", error);
+        console.error('[GlobalTimeline] Failed to store events:', error);
       });
 
       const eventIds = bufferedEvents.map((e) => e.id);
@@ -284,19 +315,32 @@ export async function loadGlobalTimeline(
       const oldestTimestamp = Math.min(...timestamps);
 
       if (isInitialLoad) {
-        prependEventsToTimeline("global", undefined, eventIds, newestTimestamp).catch((error) => {
-          console.error("[GlobalTimeline] Failed to update timeline:", error);
+        prependEventsToTimeline(
+          'global',
+          undefined,
+          eventIds,
+          newestTimestamp,
+        ).catch((error) => {
+          console.error('[GlobalTimeline] Failed to update timeline:', error);
         });
       } else {
-        appendEventsToTimeline("global", undefined, eventIds, oldestTimestamp).catch((error) => {
-          console.error("[GlobalTimeline] Failed to append to timeline:", error);
+        appendEventsToTimeline(
+          'global',
+          undefined,
+          eventIds,
+          oldestTimestamp,
+        ).catch((error) => {
+          console.error(
+            '[GlobalTimeline] Failed to append to timeline:',
+            error,
+          );
         });
       }
     }
     // === End event storage ===
 
     // Only show error if no events exist in the DOM and seenEventIds is still empty
-    const hasEvents = output.querySelectorAll(".event-container").length > 0;
+    const hasEvents = output.querySelectorAll('.event-container').length > 0;
     if (!hasEvents && seenEventIds.size === 0) {
       if (!routeIsActive()) return; // Guard before DOM update
       console.warn('[GlobalTimeline] No events loaded:', {
@@ -327,15 +371,15 @@ export async function loadGlobalTimeline(
     }
 
     if (connectingMsg) {
-      connectingMsg.style.display = "none";
+      connectingMsg.style.display = 'none';
     }
 
     if (loadMoreBtn) {
       (loadMoreBtn as HTMLButtonElement).disabled = false;
-      loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+      loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       // Only show load more button if we have events
       if (hasEvents || seenEventIds.size > 0) {
-        loadMoreBtn.style.display = "inline";
+        loadMoreBtn.style.display = 'inline';
       }
     }
   }, 8000); // Safety timeout to ensure loading completes even if relays don't respond
@@ -343,20 +387,24 @@ export async function loadGlobalTimeline(
 
   if (loadMoreBtn) {
     // Remove old listeners and add new one
-    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
+    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
+      true,
+    ) as HTMLElement;
     loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
-    newLoadMoreBtn.addEventListener("click", (): Promise<void> =>
-      loadGlobalTimeline(
-        relays,
-        limit,
-        untilTimestamp,
-        seenEventIds,
-        output,
-        connectingMsg,
-        [],
-        activeTimeouts,
-        routeIsActive,
-      ),
+    newLoadMoreBtn.addEventListener(
+      'click',
+      (): Promise<void> =>
+        loadGlobalTimeline(
+          relays,
+          limit,
+          untilTimestamp,
+          seenEventIds,
+          output,
+          connectingMsg,
+          [],
+          activeTimeouts,
+          routeIsActive,
+        ),
     );
   }
 }

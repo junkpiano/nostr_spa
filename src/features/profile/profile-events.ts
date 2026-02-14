@@ -1,15 +1,20 @@
 import { nip19 } from 'nostr-tools';
 import type { EventPacket } from 'rx-nostr';
-import { renderEvent } from "../../common/event-render.js";
-import { getRxNostr, createBackwardReq } from "../relays/rx-nostr-client.js";
-import { getRelays } from "../relays/relays.js";
-import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  PubkeyHex,
+} from '../../../types/nostr';
 import {
+  appendEventsToTimeline,
   getCachedTimeline,
-  storeEvents,
   prependEventsToTimeline,
-  appendEventsToTimeline
-} from "../../common/db/index.js";
+  storeEvents,
+} from '../../common/db/index.js';
+import { renderEvent } from '../../common/event-render.js';
+import { getRelays } from '../relays/relays.js';
+import { createBackwardReq, getRxNostr } from '../relays/rx-nostr-client.js';
 
 export async function loadEvents(
   pubkeyHex: PubkeyHex,
@@ -30,7 +35,7 @@ export async function loadEvents(
   let anyEventLoaded: boolean = false;
   let clearedPlaceholder: boolean = false;
   let finalized: boolean = false;
-  const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
+  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
   const bufferedEvents: NostrEvent[] = [];
 
   // === PHASE 2: Cache-first loading ===
@@ -39,7 +44,7 @@ export async function loadEvents(
 
   if (isInitialLoad) {
     try {
-      const cached = await getCachedTimeline("user", pubkeyHex, { limit: 50 });
+      const cached = await getCachedTimeline('user', pubkeyHex, { limit: 50 });
       const cacheAgeMinutes = cached.hasCache
         ? Math.floor((Date.now() / 1000 - cached.newestTimestamp) / 60)
         : 0;
@@ -49,32 +54,36 @@ export async function loadEvents(
       const isCacheStale = cacheAgeMinutes > CACHE_MAX_AGE_MINUTES;
 
       if (cached.hasCache && cached.events.length > 0) {
-        console.log(`[ProfileEvents] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`);
+        console.log(
+          `[ProfileEvents] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`,
+        );
 
         if (isCacheStale) {
-          console.log(`[ProfileEvents] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`);
+          console.log(
+            `[ProfileEvents] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`,
+          );
           // Don't display stale cache, go straight to fresh relay fetch
         } else {
           if (!routeIsActive()) return; // Guard before DOM update
           clearedPlaceholder = true;
-          output.innerHTML = "";
+          output.innerHTML = '';
 
           // Check route once before loop to avoid partial state updates
           if (routeIsActive()) {
             for (const event of cached.events) {
-            if (seenEventIds.has(event.id)) {
-              continue;
-            }
-            seenEventIds.add(event.id);
+              if (seenEventIds.has(event.id)) {
+                continue;
+              }
+              seenEventIds.add(event.id);
 
-            const npubStr: Npub = nip19.npubEncode(event.pubkey);
-            renderEvent(event, profile, npubStr, event.pubkey, output);
+              const npubStr: Npub = nip19.npubEncode(event.pubkey);
+              renderEvent(event, profile, npubStr, event.pubkey, output);
               anyEventLoaded = true;
             }
           }
 
           if (connectingMsg) {
-            connectingMsg.style.display = "none";
+            connectingMsg.style.display = 'none';
           }
 
           // IMPORTANT: Don't update untilTimestamp from cache on initial load
@@ -83,18 +92,18 @@ export async function loadEvents(
         }
       }
     } catch (error) {
-      console.error("[ProfileEvents] Failed to load from cache:", error);
+      console.error('[ProfileEvents] Failed to load from cache:', error);
     }
   }
   // === End cache-first loading ===
 
   if (connectingMsg && !clearedPlaceholder) {
-    connectingMsg.style.display = ""; // Show connecting message
+    connectingMsg.style.display = ''; // Show connecting message
   }
 
   if (loadMoreBtn) {
     (loadMoreBtn as HTMLButtonElement).disabled = true; // Disable the button while loading
-    loadMoreBtn.classList.add("opacity-50", "cursor-not-allowed"); // Add styles to indicate it's disabled
+    loadMoreBtn.classList.add('opacity-50', 'cursor-not-allowed'); // Add styles to indicate it's disabled
   }
 
   // Use rx-nostr to fetch events
@@ -128,7 +137,7 @@ export async function loadEvents(
     // === PHASE 2: Store fetched events to cache ===
     if (bufferedEvents.length > 0) {
       storeEvents(bufferedEvents, { isHomeTimeline: false }).catch((error) => {
-        console.error("[ProfileEvents] Failed to store events:", error);
+        console.error('[ProfileEvents] Failed to store events:', error);
       });
 
       const eventIds = bufferedEvents.map((e) => e.id);
@@ -137,19 +146,30 @@ export async function loadEvents(
       const oldestTimestamp = Math.min(...timestamps);
 
       if (isInitialLoad) {
-        prependEventsToTimeline("user", pubkeyHex, eventIds, newestTimestamp).catch((error) => {
-          console.error("[ProfileEvents] Failed to update timeline:", error);
+        prependEventsToTimeline(
+          'user',
+          pubkeyHex,
+          eventIds,
+          newestTimestamp,
+        ).catch((error) => {
+          console.error('[ProfileEvents] Failed to update timeline:', error);
         });
       } else {
-        appendEventsToTimeline("user", pubkeyHex, eventIds, oldestTimestamp).catch((error) => {
-          console.error("[ProfileEvents] Failed to append to timeline:", error);
+        appendEventsToTimeline(
+          'user',
+          pubkeyHex,
+          eventIds,
+          oldestTimestamp,
+        ).catch((error) => {
+          console.error('[ProfileEvents] Failed to append to timeline:', error);
         });
       }
     }
     // === End event storage ===
 
     // Check for actual event containers, not loading spinners
-    const hasRenderedEvents = output.querySelectorAll(".event-container").length > 0;
+    const hasRenderedEvents =
+      output.querySelectorAll('.event-container').length > 0;
 
     if (!anyEventLoaded && !hasRenderedEvents && seenEventIds.size === 0) {
       if (!routeIsActive()) return; // Guard before DOM update
@@ -163,14 +183,14 @@ export async function loadEvents(
     }
 
     if (connectingMsg) {
-      connectingMsg.style.display = "none";
+      connectingMsg.style.display = 'none';
     }
 
     if (loadMoreBtn) {
       (loadMoreBtn as HTMLButtonElement).disabled = false;
-      loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+      loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       if (hasRenderedEvents) {
-        loadMoreBtn.style.display = "inline";
+        loadMoreBtn.style.display = 'inline';
       }
     }
   };
@@ -190,12 +210,12 @@ export async function loadEvents(
 
       if (!clearedPlaceholder) {
         if (!routeIsActive()) return;
-        output.innerHTML = "";
+        output.innerHTML = '';
         clearedPlaceholder = true;
       }
 
       if (connectingMsg) {
-        connectingMsg.style.display = "none";
+        connectingMsg.style.display = 'none';
       }
 
       if (!routeIsActive()) return;
@@ -208,22 +228,24 @@ export async function loadEvents(
       if (!routeIsActive()) return;
       console.error('[ProfileEvents] Subscription error:', err);
       if (connectingMsg) {
-        connectingMsg.style.display = "none";
+        connectingMsg.style.display = 'none';
       }
       if (loadMoreBtn) {
         (loadMoreBtn as HTMLButtonElement).disabled = false;
-        loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+        loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       }
       if (!finalized) {
         finalizeLoading();
       }
     },
     complete: () => {
-      console.log(`[ProfileEvents] Subscription complete. Received ${bufferedEvents.length} events.`);
+      console.log(
+        `[ProfileEvents] Subscription complete. Received ${bufferedEvents.length} events.`,
+      );
       if (!finalized) {
         finalizeLoading();
       }
-    }
+    },
   });
 
   // Emit filter AFTER subscribe — rx-nostr uses a regular Subject, not ReplaySubject,
@@ -232,18 +254,32 @@ export async function loadEvents(
 
   window.setTimeout((): void => {
     if (!finalized) {
-      console.warn("[ProfileEvents] Timeline loading timed out, forcing finalization");
+      console.warn(
+        '[ProfileEvents] Timeline loading timed out, forcing finalization',
+      );
       finalizeLoading();
     }
   }, 8000);
 
   if (loadMoreBtn) {
-    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
+    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
+      true,
+    ) as HTMLElement;
     loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
     newLoadMoreBtn.addEventListener(
-      "click",
+      'click',
       (): Promise<void> =>
-        loadEvents(pubkeyHex, profile, relays, limit, untilTimestamp, seenEventIds, output, connectingMsg, routeIsActive),
+        loadEvents(
+          pubkeyHex,
+          profile,
+          relays,
+          limit,
+          untilTimestamp,
+          seenEventIds,
+          output,
+          connectingMsg,
+          routeIsActive,
+        ),
     );
   }
 }

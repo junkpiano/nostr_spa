@@ -4,5 +4,5 @@ export type SetActiveNavFn = (
   relaysButton: HTMLElement | null,
   profileLink: HTMLElement | null,
   settingsButton: HTMLElement | null,
-  activeButton: HTMLElement | null
+  activeButton: HTMLElement | null,
 ) => void;

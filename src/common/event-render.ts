@@ -1,12 +1,31 @@
-import { nip19, finalizeEvent } from 'nostr-tools';
-import { getAvatarURL, getDisplayName, fetchOGP, isTwitterURL, fetchTwitterEmbed, loadTwitterWidgets, replaceEmojiShortcodes } from "../utils/utils.js";
-import { fetchProfile } from "../features/profile/profile.js";
-import { getRelays } from "../features/relays/relays.js";
-import { getSessionPrivateKey } from "./session.js";
-import { cacheDeletionStatus, fetchEventById, getCachedDeletionStatus, isEventDeleted } from "./events-queries.js";
-import { createRelayWebSocket } from "./relay-socket.js";
-import { getCachedEvent, setCachedEvent } from "./event-cache.js";
-import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../../types/nostr";
+import { finalizeEvent, nip19 } from 'nostr-tools';
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  OGPResponse,
+  PubkeyHex,
+} from '../../types/nostr';
+import { fetchProfile } from '../features/profile/profile.js';
+import { getRelays } from '../features/relays/relays.js';
+import {
+  fetchOGP,
+  fetchTwitterEmbed,
+  getAvatarURL,
+  getDisplayName,
+  isTwitterURL,
+  loadTwitterWidgets,
+  replaceEmojiShortcodes,
+} from '../utils/utils.js';
+import { getCachedEvent, setCachedEvent } from './event-cache.js';
+import {
+  cacheDeletionStatus,
+  fetchEventById,
+  getCachedDeletionStatus,
+  isEventDeleted,
+} from './events-queries.js';
+import { createRelayWebSocket } from './relay-socket.js';
+import { getSessionPrivateKey } from './session.js';
 
 const REFERENCED_EVENT_CACHE_LIMIT: number = 1000;
 const referencedEventCache: Map<string, Promise<NostrEvent | null>> = new Map();
@@ -18,13 +37,16 @@ interface ReactionAggregate {
   imageUrl?: string;
 }
 
-const reactionCache: Map<string, Promise<Map<string, ReactionAggregate>>> = new Map();
+const reactionCache: Map<
+  string,
+  Promise<Map<string, ReactionAggregate>>
+> = new Map();
 const reactionEventsCache: Map<string, Promise<NostrEvent[]>> = new Map();
 
 function isValidEmojiImageUrl(url: string): boolean {
   try {
     const parsed: URL = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
   } catch {
     return false;
   }
@@ -32,17 +54,17 @@ function isValidEmojiImageUrl(url: string): boolean {
 
 function escapeHtmlAttribute(value: string): string {
   return value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/'/g, "&#39;");
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/'/g, '&#39;');
 }
 
 function getEmojiTagMap(tags: string[][]): Map<string, string> {
   const emojiTagMap: Map<string, string> = new Map();
   tags.forEach((tag: string[]): void => {
-    if (tag[0] !== "emoji") {
+    if (tag[0] !== 'emoji') {
       return;
     }
     const shortcode: string | undefined = tag[1];
@@ -61,66 +83,88 @@ function getEmojiTagMap(tags: string[][]): Map<string, string> {
   return emojiTagMap;
 }
 
-function replaceCustomEmojiShortcodes(content: string, tags: string[][]): string {
+function replaceCustomEmojiShortcodes(
+  content: string,
+  tags: string[][],
+): string {
   const emojiTagMap: Map<string, string> = getEmojiTagMap(tags);
 
   if (emojiTagMap.size === 0) {
     return content;
   }
 
-  return content.replace(/:([a-z0-9_]+):/gi, (match: string, code: string): string => {
-    const imageUrl: string | undefined = emojiTagMap.get(code.toLowerCase());
-    if (!imageUrl) {
-      return match;
-    }
-    const safeCode: string = escapeHtmlAttribute(code);
-    const safeUrl: string = escapeHtmlAttribute(imageUrl);
-    return `<img src="${safeUrl}" alt=":${safeCode}:" title=":${safeCode}:" class="inline-block align-text-bottom h-5 w-5 mx-0.5" loading="lazy" decoding="async" />`;
-  });
+  return content.replace(
+    /:([a-z0-9_]+):/gi,
+    (match: string, code: string): string => {
+      const imageUrl: string | undefined = emojiTagMap.get(code.toLowerCase());
+      if (!imageUrl) {
+        return match;
+      }
+      const safeCode: string = escapeHtmlAttribute(code);
+      const safeUrl: string = escapeHtmlAttribute(imageUrl);
+      return `<img src="${safeUrl}" alt=":${safeCode}:" title=":${safeCode}:" class="inline-block align-text-bottom h-5 w-5 mx-0.5" loading="lazy" decoding="async" />`;
+    },
+  );
 }
 
-function setReferencedEventCache(eventId: string, request: Promise<NostrEvent | null>): void {
+function setReferencedEventCache(
+  eventId: string,
+  request: Promise<NostrEvent | null>,
+): void {
   referencedEventCache.delete(eventId);
   referencedEventCache.set(eventId, request);
   if (referencedEventCache.size > REFERENCED_EVENT_CACHE_LIMIT) {
-    const oldestKey: string | undefined = referencedEventCache.keys().next().value;
+    const oldestKey: string | undefined = referencedEventCache
+      .keys()
+      .next().value;
     if (oldestKey) {
       referencedEventCache.delete(oldestKey);
     }
   }
 }
 
-async function fetchEventByIdCached(eventId: string, relays: string[]): Promise<NostrEvent | null> {
-  const cached: Promise<NostrEvent | null> | undefined = referencedEventCache.get(eventId);
+async function fetchEventByIdCached(
+  eventId: string,
+  relays: string[],
+): Promise<NostrEvent | null> {
+  const cached: Promise<NostrEvent | null> | undefined =
+    referencedEventCache.get(eventId);
   if (cached) {
     setReferencedEventCache(eventId, cached);
     return cached;
   }
 
-  const request: Promise<NostrEvent | null> = (async (): Promise<NostrEvent | null> => {
-    const cachedEvent: NostrEvent | null = await getCachedEvent(eventId);
-    if (cachedEvent) {
-      return cachedEvent;
-    }
-    const event: NostrEvent | null = await fetchEventById(eventId, relays);
-    if (event) {
-      await setCachedEvent(event);
-      return event;
-    }
-    referencedEventCache.delete(eventId);
-    return null;
-  })();
+  const request: Promise<NostrEvent | null> =
+    (async (): Promise<NostrEvent | null> => {
+      const cachedEvent: NostrEvent | null = await getCachedEvent(eventId);
+      if (cachedEvent) {
+        return cachedEvent;
+      }
+      const event: NostrEvent | null = await fetchEventById(eventId, relays);
+      if (event) {
+        await setCachedEvent(event);
+        return event;
+      }
+      referencedEventCache.delete(eventId);
+      return null;
+    })();
   setReferencedEventCache(eventId, request);
   return request;
 }
 
-async function fetchReactions(eventId: string, relays: string[]): Promise<Map<string, ReactionAggregate>> {
-  const cached: Promise<Map<string, ReactionAggregate>> | undefined = reactionCache.get(eventId);
+async function fetchReactions(
+  eventId: string,
+  relays: string[],
+): Promise<Map<string, ReactionAggregate>> {
+  const cached: Promise<Map<string, ReactionAggregate>> | undefined =
+    reactionCache.get(eventId);
   if (cached) {
     return cached;
   }
 
-  const request: Promise<Map<string, ReactionAggregate>> = new Promise<Map<string, ReactionAggregate>>((resolve) => {
+  const request: Promise<Map<string, ReactionAggregate>> = new Promise<
+    Map<string, ReactionAggregate>
+  >((resolve) => {
     const counts: Map<string, ReactionAggregate> = new Map();
     const seenReactionIds: Set<string> = new Set();
 
@@ -142,31 +186,36 @@ async function fetchReactions(eventId: string, relays: string[]): Promise<Map<st
           }, 5000);
 
           socket.onopen = (): void => {
-            const subId: string = "reactions-" + Math.random().toString(36).slice(2);
-            const req: [string, string, { kinds: number[]; "#e": string[]; limit: number }] = [
-              "REQ",
-              subId,
-              { kinds: [7], "#e": [eventId], limit: 50 },
-            ];
+            const subId: string = `reactions-${Math.random().toString(36).slice(2)}`;
+            const req: [
+              string,
+              string,
+              { kinds: number[]; '#e': string[]; limit: number },
+            ] = ['REQ', subId, { kinds: [7], '#e': [eventId], limit: 50 }];
             socket.send(JSON.stringify(req));
           };
 
           socket.onmessage = (msg: MessageEvent): void => {
             const arr: any[] = JSON.parse(msg.data);
-            if (arr[0] === "EVENT" && arr[2]) {
+            if (arr[0] === 'EVENT' && arr[2]) {
               const event: NostrEvent = arr[2];
               if (event.kind !== 7 || seenReactionIds.has(event.id)) {
                 return;
               }
               seenReactionIds.add(event.id);
-              const reaction: ReactionAggregate = getReactionAggregate(event.content, event.tags);
-              const existing: ReactionAggregate | undefined = counts.get(reaction.key);
+              const reaction: ReactionAggregate = getReactionAggregate(
+                event.content,
+                event.tags,
+              );
+              const existing: ReactionAggregate | undefined = counts.get(
+                reaction.key,
+              );
               if (existing) {
                 existing.count += 1;
               } else {
                 counts.set(reaction.key, reaction);
               }
-            } else if (arr[0] === "EOSE") {
+            } else if (arr[0] === 'EOSE') {
               finish();
             }
           };
@@ -189,88 +238,102 @@ async function fetchReactions(eventId: string, relays: string[]): Promise<Map<st
   return request;
 }
 
-async function fetchReactionEvents(eventId: string, relays: string[]): Promise<NostrEvent[]> {
-  const cached: Promise<NostrEvent[]> | undefined = reactionEventsCache.get(eventId);
+async function fetchReactionEvents(
+  eventId: string,
+  relays: string[],
+): Promise<NostrEvent[]> {
+  const cached: Promise<NostrEvent[]> | undefined =
+    reactionEventsCache.get(eventId);
   if (cached) {
     return cached;
   }
 
-  const request: Promise<NostrEvent[]> = new Promise<NostrEvent[]>((resolve) => {
-    const events: Map<string, NostrEvent> = new Map();
+  const request: Promise<NostrEvent[]> = new Promise<NostrEvent[]>(
+    (resolve) => {
+      const events: Map<string, NostrEvent> = new Map();
 
-    const promises = relays.map(async (relayUrl: string): Promise<void> => {
-      try {
-        const socket: WebSocket = createRelayWebSocket(relayUrl);
-        await new Promise<void>((innerResolve) => {
-          let settled: boolean = false;
-          const finish = (): void => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            socket.close();
-            innerResolve();
-          };
+      const promises = relays.map(async (relayUrl: string): Promise<void> => {
+        try {
+          const socket: WebSocket = createRelayWebSocket(relayUrl);
+          await new Promise<void>((innerResolve) => {
+            let settled: boolean = false;
+            const finish = (): void => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeout);
+              socket.close();
+              innerResolve();
+            };
 
-          const timeout = setTimeout(() => {
-            finish();
-          }, 5000);
-
-          socket.onopen = (): void => {
-            const subId: string = "reactions-events-" + Math.random().toString(36).slice(2);
-            const req: [string, string, { kinds: number[]; "#e": string[]; limit: number }] = [
-              "REQ",
-              subId,
-              { kinds: [7], "#e": [eventId], limit: 100 },
-            ];
-            socket.send(JSON.stringify(req));
-          };
-
-          socket.onmessage = (msg: MessageEvent): void => {
-            const arr: any[] = JSON.parse(msg.data);
-            if (arr[0] === "EVENT" && arr[2]) {
-              const event: NostrEvent = arr[2];
-              if (event.kind !== 7) {
-                return;
-              }
-              events.set(event.id, event);
-            } else if (arr[0] === "EOSE") {
+            const timeout = setTimeout(() => {
               finish();
-            }
-          };
+            }, 5000);
 
-          socket.onerror = (): void => {
-            finish();
-          };
-        });
-      } catch (e) {
-        console.warn(`Failed to fetch reaction events from ${relayUrl}:`, e);
-      }
-    });
+            socket.onopen = (): void => {
+              const subId: string = `reactions-events-${Math.random().toString(36).slice(2)}`;
+              const req: [
+                string,
+                string,
+                { kinds: number[]; '#e': string[]; limit: number },
+              ] = ['REQ', subId, { kinds: [7], '#e': [eventId], limit: 100 }];
+              socket.send(JSON.stringify(req));
+            };
 
-    Promise.allSettled(promises).then(() => {
-      const list: NostrEvent[] = Array.from(events.values());
-      list.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
-      resolve(list);
-    });
-  });
+            socket.onmessage = (msg: MessageEvent): void => {
+              const arr: any[] = JSON.parse(msg.data);
+              if (arr[0] === 'EVENT' && arr[2]) {
+                const event: NostrEvent = arr[2];
+                if (event.kind !== 7) {
+                  return;
+                }
+                events.set(event.id, event);
+              } else if (arr[0] === 'EOSE') {
+                finish();
+              }
+            };
+
+            socket.onerror = (): void => {
+              finish();
+            };
+          });
+        } catch (e) {
+          console.warn(`Failed to fetch reaction events from ${relayUrl}:`, e);
+        }
+      });
+
+      Promise.allSettled(promises).then(() => {
+        const list: NostrEvent[] = Array.from(events.values());
+        list.sort(
+          (a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at,
+        );
+        resolve(list);
+      });
+    },
+  );
 
   reactionEventsCache.set(eventId, request);
   return request;
 }
 
 function normalizeReaction(content: string | undefined): string {
-  const trimmed: string = replaceEmojiShortcodes(content || "").trim();
-  return trimmed ? trimmed : "❤";
+  const trimmed: string = replaceEmojiShortcodes(content || '').trim();
+  return trimmed ? trimmed : '❤';
 }
 
-function getReactionAggregate(content: string | undefined, tags: string[][]): ReactionAggregate {
+function getReactionAggregate(
+  content: string | undefined,
+  tags: string[][],
+): ReactionAggregate {
   const normalizedContent: string = normalizeReaction(content);
-  const customMatch: RegExpMatchArray | null = normalizedContent.match(/^:([a-z0-9_]+):$/i);
+  const customMatch: RegExpMatchArray | null =
+    normalizedContent.match(/^:([a-z0-9_]+):$/i);
   const shortcodeMatch: string | undefined = customMatch?.[1];
   if (shortcodeMatch) {
     const shortcode: string = shortcodeMatch;
     const emojiTagMap: Map<string, string> = getEmojiTagMap(tags);
-    const imageUrl: string | undefined = emojiTagMap.get(shortcode.toLowerCase());
+    const imageUrl: string | undefined = emojiTagMap.get(
+      shortcode.toLowerCase(),
+    );
     if (imageUrl) {
       return {
         count: 1,
@@ -289,12 +352,18 @@ function getReactionAggregate(content: string | undefined, tags: string[][]): Re
 }
 
 function resolveParentAuthorPubkey(event: NostrEvent): PubkeyHex | null {
-  const pTags: string[][] = event.tags.filter((tag: string[]): boolean => tag[0] === "p");
-  const replyTag: string[] | undefined = pTags.find((tag: string[]): boolean => tag[3] === "reply");
+  const pTags: string[][] = event.tags.filter(
+    (tag: string[]): boolean => tag[0] === 'p',
+  );
+  const replyTag: string[] | undefined = pTags.find(
+    (tag: string[]): boolean => tag[3] === 'reply',
+  );
   if (replyTag?.[1]) {
     return replyTag[1] as PubkeyHex;
   }
-  const rootTag: string[] | undefined = pTags.find((tag: string[]): boolean => tag[3] === "root");
+  const rootTag: string[] | undefined = pTags.find(
+    (tag: string[]): boolean => tag[3] === 'root',
+  );
   if (rootTag?.[1]) {
     return rootTag[1] as PubkeyHex;
   }
@@ -305,9 +374,16 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchEventWithRetry(eventId: string, relays: string[], attempts: number = 4): Promise<NostrEvent | null> {
+async function fetchEventWithRetry(
+  eventId: string,
+  relays: string[],
+  attempts: number = 4,
+): Promise<NostrEvent | null> {
   for (let i = 0; i < attempts; i += 1) {
-    const event: NostrEvent | null = await fetchEventByIdCached(eventId, relays);
+    const event: NostrEvent | null = await fetchEventByIdCached(
+      eventId,
+      relays,
+    );
     if (event) {
       return event;
     }
@@ -325,45 +401,52 @@ export async function loadReactionsForEvent(
 ): Promise<void> {
   const relays: string[] = getRelays();
   try {
-    const counts: Map<string, ReactionAggregate> = await fetchReactions(eventId, relays);
+    const counts: Map<string, ReactionAggregate> = await fetchReactions(
+      eventId,
+      relays,
+    );
     if (counts.size === 0) {
-      container.innerHTML = "";
+      container.innerHTML = '';
       return;
     }
 
     const entries: ReactionAggregate[] = Array.from(counts.values());
-    entries.sort((a: ReactionAggregate, b: ReactionAggregate): number => b.count - a.count);
+    entries.sort(
+      (a: ReactionAggregate, b: ReactionAggregate): number => b.count - a.count,
+    );
     const top: ReactionAggregate[] = entries.slice(0, 5);
 
-    container.innerHTML = "";
+    container.innerHTML = '';
     top.forEach((reaction: ReactionAggregate): void => {
-      const badge: HTMLSpanElement = document.createElement("span");
-      badge.className = "relative inline-flex items-center gap-1 rounded-full bg-white border border-gray-200 px-2 py-1 cursor-pointer hover:bg-gray-50 transition-colors";
+      const badge: HTMLSpanElement = document.createElement('span');
+      badge.className =
+        'relative inline-flex items-center gap-1 rounded-full bg-white border border-gray-200 px-2 py-1 cursor-pointer hover:bg-gray-50 transition-colors';
       badge.dataset.reaction = reaction.key;
       let emojiEl: HTMLSpanElement | HTMLImageElement;
       if (reaction.imageUrl && reaction.shortcode) {
-        const imageEl: HTMLImageElement = document.createElement("img");
+        const imageEl: HTMLImageElement = document.createElement('img');
         imageEl.src = reaction.imageUrl;
         imageEl.alt = `:${reaction.shortcode}:`;
         imageEl.title = `:${reaction.shortcode}:`;
-        imageEl.className = "inline-block h-5 w-5 align-text-bottom";
-        imageEl.loading = "lazy";
-        imageEl.decoding = "async";
+        imageEl.className = 'inline-block h-5 w-5 align-text-bottom';
+        imageEl.loading = 'lazy';
+        imageEl.decoding = 'async';
         emojiEl = imageEl;
       } else {
-        const textEl: HTMLSpanElement = document.createElement("span");
+        const textEl: HTMLSpanElement = document.createElement('span');
         textEl.textContent = reaction.content;
         emojiEl = textEl;
       }
-      const countEl: HTMLSpanElement = document.createElement("span");
-      countEl.className = "font-semibold text-gray-700";
+      const countEl: HTMLSpanElement = document.createElement('span');
+      countEl.className = 'font-semibold text-gray-700';
       countEl.textContent = reaction.count.toString();
       badge.appendChild(emojiEl);
       badge.appendChild(countEl);
 
-      const tooltip: HTMLDivElement = document.createElement("div");
-      tooltip.className = "fixed w-56 rounded-lg border border-gray-200 bg-white shadow-lg p-2 text-xs text-gray-700 z-50";
-      tooltip.style.display = "none";
+      const tooltip: HTMLDivElement = document.createElement('div');
+      tooltip.className =
+        'fixed w-56 rounded-lg border border-gray-200 bg-white shadow-lg p-2 text-xs text-gray-700 z-50';
+      tooltip.style.display = 'none';
       document.body.appendChild(tooltip);
 
       let hoverTimeout: number | null = null;
@@ -383,7 +466,7 @@ export async function loadReactionsForEvent(
           hoverTimeout = null;
         }
         positionTooltip();
-        tooltip.style.display = "block";
+        tooltip.style.display = 'block';
         loadReactionDetails(eventId, reaction.key, tooltip);
       };
 
@@ -392,51 +475,58 @@ export async function loadReactionsForEvent(
           window.clearTimeout(hoverTimeout);
         }
         hoverTimeout = window.setTimeout((): void => {
-          tooltip.style.display = "none";
+          tooltip.style.display = 'none';
         }, 150);
       };
 
-      badge.addEventListener("mouseenter", showTooltip);
-      badge.addEventListener("mouseleave", hideTooltip);
-      tooltip.addEventListener("mouseenter", showTooltip);
-      tooltip.addEventListener("mouseleave", hideTooltip);
+      badge.addEventListener('mouseenter', showTooltip);
+      badge.addEventListener('mouseleave', hideTooltip);
+      tooltip.addEventListener('mouseenter', showTooltip);
+      tooltip.addEventListener('mouseleave', hideTooltip);
 
-      window.addEventListener("scroll", () => {
-        if (tooltip.style.display !== "none") {
+      window.addEventListener('scroll', () => {
+        if (tooltip.style.display !== 'none') {
           positionTooltip();
         }
       });
 
-      badge.addEventListener("click", (event: MouseEvent): void => {
+      badge.addEventListener('click', (event: MouseEvent): void => {
         event.preventDefault();
         publishReaction(eventId, targetPubkey, reaction);
       });
       container.appendChild(badge);
     });
   } catch (error: unknown) {
-    console.warn("Failed to load reactions:", error);
+    console.warn('Failed to load reactions:', error);
   }
 }
 
-async function loadReactionDetails(eventId: string, reactionKey: string, container: HTMLElement): Promise<void> {
+async function loadReactionDetails(
+  eventId: string,
+  reactionKey: string,
+  container: HTMLElement,
+): Promise<void> {
   container.dataset.reaction = reactionKey;
-  container.innerHTML = "<div class=\"text-xs text-gray-500\">Loading reactions...</div>";
+  container.innerHTML =
+    '<div class="text-xs text-gray-500">Loading reactions...</div>';
 
   const relays: string[] = getRelays();
   try {
     const events: NostrEvent[] = await fetchReactionEvents(eventId, relays);
     const filtered: NostrEvent[] = events.filter(
-      (event: NostrEvent): boolean => getReactionAggregate(event.content, event.tags).key === reactionKey,
+      (event: NostrEvent): boolean =>
+        getReactionAggregate(event.content, event.tags).key === reactionKey,
     );
 
     if (filtered.length === 0) {
-      container.innerHTML = "<div class=\"text-xs text-gray-500\">No reactions yet.</div>";
+      container.innerHTML =
+        '<div class="text-xs text-gray-500">No reactions yet.</div>';
       return;
     }
 
-    container.innerHTML = "";
-    const list: HTMLDivElement = document.createElement("div");
-    list.className = "space-y-2 max-h-48 overflow-auto";
+    container.innerHTML = '';
+    const list: HTMLDivElement = document.createElement('div');
+    list.className = 'space-y-2 max-h-48 overflow-auto';
     container.appendChild(list);
 
     await Promise.allSettled(
@@ -445,26 +535,27 @@ async function loadReactionDetails(eventId: string, reactionKey: string, contain
         try {
           profile = await fetchProfile(event.pubkey, relays);
         } catch (error: unknown) {
-          console.warn("Failed to load profile for reaction:", error);
+          console.warn('Failed to load profile for reaction:', error);
         }
 
         const npub: Npub = nip19.npubEncode(event.pubkey);
         const name: string = getDisplayName(npub, profile);
         const avatar: string = getAvatarURL(event.pubkey, profile);
 
-        const row: HTMLAnchorElement = document.createElement("a");
-        row.className = "flex items-center gap-2 text-sm text-gray-700 hover:text-blue-600 transition-colors";
+        const row: HTMLAnchorElement = document.createElement('a');
+        row.className =
+          'flex items-center gap-2 text-sm text-gray-700 hover:text-blue-600 transition-colors';
         row.href = `/${npub}`;
 
-        const img: HTMLImageElement = document.createElement("img");
+        const img: HTMLImageElement = document.createElement('img');
         img.src = avatar;
         img.alt = name;
-        img.className = "w-6 h-6 rounded-full object-cover";
+        img.className = 'w-6 h-6 rounded-full object-cover';
         img.onerror = (): void => {
-          img.src = "https://placekitten.com/80/80";
+          img.src = 'https://placekitten.com/80/80';
         };
 
-        const nameEl: HTMLSpanElement = document.createElement("span");
+        const nameEl: HTMLSpanElement = document.createElement('span');
         nameEl.textContent = name;
 
         row.appendChild(img);
@@ -473,8 +564,9 @@ async function loadReactionDetails(eventId: string, reactionKey: string, contain
       }),
     );
   } catch (error: unknown) {
-    console.warn("Failed to load reaction details:", error);
-    container.innerHTML = "<div class=\"text-xs text-gray-500\">Failed to load reactions.</div>";
+    console.warn('Failed to load reaction details:', error);
+    container.innerHTML =
+      '<div class="text-xs text-gray-500">Failed to load reactions.</div>';
   }
 }
 
@@ -483,33 +575,33 @@ async function publishReaction(
   targetPubkey: PubkeyHex,
   reaction: ReactionAggregate,
 ): Promise<void> {
-  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
   if (!storedPubkey) {
-    alert("Sign in to react.");
+    alert('Sign in to react.');
     return;
   }
 
-  const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
+  const unsignedEvent: Omit<NostrEvent, 'id' | 'sig'> = {
     kind: 7,
     pubkey: storedPubkey as PubkeyHex,
     created_at: Math.floor(Date.now() / 1000),
     tags: [
-      ["e", eventId],
-      ["p", targetPubkey],
+      ['e', eventId],
+      ['p', targetPubkey],
     ],
     content: reaction.content,
   };
   if (reaction.shortcode && reaction.imageUrl) {
-    unsignedEvent.tags.push(["emoji", reaction.shortcode, reaction.imageUrl]);
+    unsignedEvent.tags.push(['emoji', reaction.shortcode, reaction.imageUrl]);
   }
 
   let signedEvent: NostrEvent;
-  if ((window as any).nostr && (window as any).nostr.signEvent) {
+  if ((window as any).nostr?.signEvent) {
     signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
   } else {
     const privateKey: Uint8Array | null = getSessionPrivateKey();
     if (!privateKey) {
-      alert("Sign in to react.");
+      alert('Sign in to react.');
       return;
     }
     signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
@@ -526,12 +618,12 @@ async function publishReaction(
         }, 5000);
 
         socket.onopen = (): void => {
-          socket.send(JSON.stringify(["EVENT", signedEvent]));
+          socket.send(JSON.stringify(['EVENT', signedEvent]));
         };
 
         socket.onmessage = (msg: MessageEvent): void => {
           const arr: any[] = JSON.parse(msg.data);
-          if (arr[0] === "OK") {
+          if (arr[0] === 'OK') {
             clearTimeout(timeout);
             socket.close();
             resolve();
@@ -560,7 +652,9 @@ export function renderEvent(
   output: HTMLElement,
 ): void {
   const isRepost: boolean = event.kind === 6 || event.kind === 16;
-  const repostEventId: string | null = isRepost ? resolveRepostEventId(event) : null;
+  const repostEventId: string | null = isRepost
+    ? resolveRepostEventId(event)
+    : null;
   const avatar: string = getAvatarURL(pubkey, profile);
   const name: string = getDisplayName(npub, profile);
   const createdAt: string = new Date(event.created_at * 1000).toLocaleString();
@@ -568,14 +662,16 @@ export function renderEvent(
   try {
     eventPermalink = `/${nip19.neventEncode({ id: event.id })}`;
   } catch (e) {
-    console.warn("Failed to encode nevent for event link:", e);
+    console.warn('Failed to encode nevent for event link:', e);
     eventPermalink = null;
   }
   const dateHtml: string = eventPermalink
     ? `<a href="${eventPermalink}" class="text-xs text-gray-500 hover:text-blue-600 transition-colors">🕒 ${createdAt}</a>`
     : `<div class="text-xs text-gray-500">🕒 ${createdAt}</div>`;
-  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
-  const canDeletePost: boolean = Boolean(storedPubkey && storedPubkey === event.pubkey);
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
+  const canDeletePost: boolean = Boolean(
+    storedPubkey && storedPubkey === event.pubkey,
+  );
   const isLoggedIn: boolean = Boolean(storedPubkey);
   const replyButtonHtml: string = isLoggedIn
     ? `
@@ -583,16 +679,16 @@ export function renderEvent(
             💬 Reply
           </button>
         `
-    : "";
+    : '';
   const deleteButtonHtml: string = canDeletePost
     ? `
           <button class="delete-event-btn text-red-500 hover:text-red-700 transition-colors p-1 rounded" aria-label="Delete post" title="Delete post">
             🗑️
           </button>
         `
-    : "";
+    : '';
 
-  const contentSource: string = isRepost ? "" : event.content;
+  const contentSource: string = isRepost ? '' : event.content;
   const urls: string[] = [];
   const imageUrls: string[] = [];
   const mentionedNpubs: string[] = Array.from(
@@ -613,25 +709,26 @@ export function renderEvent(
   mentionedNpubs.forEach((mentionedNpub: string): void => {
     try {
       const decoded = nip19.decode(mentionedNpub);
-      if (decoded.type === "npub" && typeof decoded.data === "string") {
+      if (decoded.type === 'npub' && typeof decoded.data === 'string') {
         mentionNpubToPubkey.set(mentionedNpub, decoded.data as PubkeyHex);
       }
     } catch (error: unknown) {
-      console.warn("Failed to decode mentioned npub:", error);
+      console.warn('Failed to decode mentioned npub:', error);
     }
   });
   mentionedNprofiles.forEach((mentionedNprofile: string): void => {
     try {
       const decoded = nip19.decode(mentionedNprofile);
-      if (decoded.type === "nprofile") {
+      if (decoded.type === 'nprofile') {
         const data: any = decoded.data;
-        const pubkey: string | undefined = data?.pubkey || (typeof data === "string" ? data : undefined);
+        const pubkey: string | undefined =
+          data?.pubkey || (typeof data === 'string' ? data : undefined);
         if (pubkey) {
           mentionNpubToPubkey.set(mentionedNprofile, pubkey as PubkeyHex);
         }
       }
     } catch (error: unknown) {
-      console.warn("Failed to decode mentioned nprofile:", error);
+      console.warn('Failed to decode mentioned nprofile:', error);
     }
   });
   const referencedEventRefs: string[] = Array.from(
@@ -641,19 +738,24 @@ export function renderEvent(
         .filter((value: string | undefined): value is string => Boolean(value)),
     ),
   );
-  const parentEventId: string | null = isRepost ? null : resolveParentEventId(event);
-  const parentAuthorPubkey: PubkeyHex | null = parentEventId ? resolveParentAuthorPubkey(event) : null;
+  const parentEventId: string | null = isRepost
+    ? null
+    : resolveParentEventId(event);
+  const parentAuthorPubkey: PubkeyHex | null = parentEventId
+    ? resolveParentAuthorPubkey(event)
+    : null;
   const contentWithUnicodeEmoji: string = replaceEmojiShortcodes(contentSource);
   const contentWithNostrLinks: string = contentWithUnicodeEmoji.replace(
     /(nostr:(?:nevent1|note1)[0-9a-z]+)/gi,
-    (): string => "",
+    (): string => '',
   );
 
   const contentWithNprofiles: string = contentWithNostrLinks.replace(
     /(nostr:nprofile1[0-9a-z]+)/gi,
     (nprofileRef: string): string => {
-      const mentionedNprofile: string = nprofileRef.replace(/^nostr:/i, "");
-      const pubkey: PubkeyHex | undefined = mentionNpubToPubkey.get(mentionedNprofile);
+      const mentionedNprofile: string = nprofileRef.replace(/^nostr:/i, '');
+      const pubkey: PubkeyHex | undefined =
+        mentionNpubToPubkey.get(mentionedNprofile);
       if (pubkey) {
         const npub: Npub = nip19.npubEncode(pubkey);
         const label: string = `@${mentionedNprofile.slice(0, 12)}...`;
@@ -666,14 +768,15 @@ export function renderEvent(
   const contentWithMentions: string = contentWithNprofiles.replace(
     /(nostr:npub1[0-9a-z]+)/gi,
     (npubRef: string): string => {
-      const mentionedNpub: string = npubRef.replace(/^nostr:/i, "");
+      const mentionedNpub: string = npubRef.replace(/^nostr:/i, '');
       const label: string = `@${mentionedNpub.slice(0, 12)}...`;
       return `<a href="/${mentionedNpub}" class="text-indigo-600 underline mention-link" data-mention-npub="${mentionedNpub}">${label}</a>`;
     },
   );
 
   // Check energy saving mode
-  const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
+  const isEnergySavingMode: boolean =
+    localStorage.getItem('energy_saving_mode') === 'true';
 
   const contentWithLinks: string = contentWithMentions.replace(
     /(https?:\/\/[^\s]+)/g,
@@ -696,17 +799,21 @@ export function renderEvent(
     },
   );
 
-  const contentWithCustomEmoji: string = replaceCustomEmojiShortcodes(contentWithLinks, event.tags);
+  const contentWithCustomEmoji: string = replaceCustomEmojiShortcodes(
+    contentWithLinks,
+    event.tags,
+  );
   const hasContent: boolean = contentWithCustomEmoji.trim().length > 0;
   const repostBadgeHtml: string = isRepost
     ? `<span class="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5">🔁 Repost</span>`
-    : "";
+    : '';
   const contentHtml: string = hasContent
     ? `<div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithCustomEmoji}</div>`
-    : "";
+    : '';
 
-  const div: HTMLDivElement = document.createElement("div");
-  div.className = "bg-gray-50 border border-gray-200 rounded p-4 shadow event-container";
+  const div: HTMLDivElement = document.createElement('div');
+  div.className =
+    'bg-gray-50 border border-gray-200 rounded p-4 shadow event-container';
   div.dataset.pubkey = pubkey;
   if (imageUrls.length > 0) {
     div.dataset.images = JSON.stringify(imageUrls);
@@ -743,7 +850,9 @@ export function renderEvent(
 		  `;
   output.appendChild(div);
   if (parentEventId) {
-    const parentContainer: HTMLElement | null = div.querySelector(".parent-event-container");
+    const parentContainer: HTMLElement | null = div.querySelector(
+      '.parent-event-container',
+    );
     if (parentContainer) {
       renderParentEventCard(parentEventId, parentAuthorPubkey, parentContainer);
     }
@@ -752,11 +861,13 @@ export function renderEvent(
     enrichMentionDisplayNames(div, mentionNpubToPubkey);
   }
 
-  const replyButton: HTMLButtonElement | null = div.querySelector(".reply-event-btn") as HTMLButtonElement | null;
+  const replyButton: HTMLButtonElement | null = div.querySelector(
+    '.reply-event-btn',
+  ) as HTMLButtonElement | null;
   if (replyButton) {
-    replyButton.addEventListener("click", (): void => {
+    replyButton.addEventListener('click', (): void => {
       // Trigger reply overlay via custom event
-      const replyEvent = new CustomEvent("open-reply", {
+      const replyEvent = new CustomEvent('open-reply', {
         detail: {
           eventId: event.id,
           eventPubkey: event.pubkey,
@@ -768,32 +879,35 @@ export function renderEvent(
     });
   }
 
-  const deleteButton: HTMLButtonElement | null = div.querySelector(".delete-event-btn") as HTMLButtonElement | null;
+  const deleteButton: HTMLButtonElement | null = div.querySelector(
+    '.delete-event-btn',
+  ) as HTMLButtonElement | null;
   if (deleteButton) {
-    deleteButton.addEventListener("click", async (): Promise<void> => {
-      const confirmed: boolean = window.confirm("Delete this post?");
+    deleteButton.addEventListener('click', async (): Promise<void> => {
+      const confirmed: boolean = window.confirm('Delete this post?');
       if (!confirmed) {
         return;
       }
 
       deleteButton.disabled = true;
-      deleteButton.classList.add("opacity-60", "cursor-not-allowed");
+      deleteButton.classList.add('opacity-60', 'cursor-not-allowed');
 
       try {
         await deleteEventOnRelays(event);
         div.remove();
       } catch (error: unknown) {
-        console.error("Failed to delete event:", error);
-        alert("Failed to delete post. Please try again.");
+        console.error('Failed to delete event:', error);
+        alert('Failed to delete post. Please try again.');
         deleteButton.disabled = false;
-        deleteButton.classList.remove("opacity-60", "cursor-not-allowed");
+        deleteButton.classList.remove('opacity-60', 'cursor-not-allowed');
       }
     });
   }
 
   // Skip OGP/embeds in energy saving mode
   if (urls.length > 0 && !isEnergySavingMode) {
-    const ogpContainer: HTMLElement | null = div.querySelector(".ogp-container");
+    const ogpContainer: HTMLElement | null =
+      div.querySelector('.ogp-container');
     if (ogpContainer) {
       urls.forEach(async (url: string): Promise<void> => {
         if (isTwitterURL(url)) {
@@ -804,7 +918,7 @@ export function renderEvent(
           }
         } else {
           const ogpData: OGPResponse | null = await fetchOGP(url);
-          if (ogpData && ogpData.data) {
+          if (ogpData?.data) {
             renderOGPCard(ogpData, ogpContainer);
           }
         }
@@ -820,12 +934,14 @@ export function renderEvent(
         allReferencedEventRefs.unshift(repostRef);
       }
     } catch (e) {
-      console.warn("Failed to encode repost event ref:", e);
+      console.warn('Failed to encode repost event ref:', e);
     }
   }
 
   if (allReferencedEventRefs.length > 0) {
-    const referencedContainer: HTMLElement | null = div.querySelector(".referenced-events-container");
+    const referencedContainer: HTMLElement | null = div.querySelector(
+      '.referenced-events-container',
+    );
     if (referencedContainer) {
       renderReferencedEventCards(allReferencedEventRefs, referencedContainer);
     }
@@ -839,29 +955,37 @@ function resolveRepostEventId(event: NostrEvent): string | null {
   if (event.content) {
     try {
       const parsed: { id?: string } = JSON.parse(event.content);
-      if (parsed && typeof parsed.id === "string") {
+      if (parsed && typeof parsed.id === 'string') {
         return parsed.id;
       }
     } catch {
       // ignore non-JSON content
     }
   }
-  const eTag: string[] | undefined = event.tags.find((tag: string[]): boolean => tag[0] === "e" && Boolean(tag[1]));
+  const eTag: string[] | undefined = event.tags.find(
+    (tag: string[]): boolean => tag[0] === 'e' && Boolean(tag[1]),
+  );
   return eTag?.[1] || null;
 }
 
 function resolveParentEventId(event: NostrEvent): string | null {
-  const eTags: string[][] = event.tags.filter((tag: string[]): boolean => tag[0] === "e" && Boolean(tag[1]));
+  const eTags: string[][] = event.tags.filter(
+    (tag: string[]): boolean => tag[0] === 'e' && Boolean(tag[1]),
+  );
   if (eTags.length === 0) {
     return null;
   }
 
-  const replyTag: string[] | undefined = eTags.find((tag: string[]): boolean => tag[3] === "reply");
+  const replyTag: string[] | undefined = eTags.find(
+    (tag: string[]): boolean => tag[3] === 'reply',
+  );
   if (replyTag?.[1]) {
     return replyTag[1];
   }
 
-  const rootTag: string[] | undefined = eTags.find((tag: string[]): boolean => tag[3] === "root");
+  const rootTag: string[] | undefined = eTags.find(
+    (tag: string[]): boolean => tag[3] === 'root',
+  );
   if (rootTag?.[1]) {
     return rootTag[1];
   }
@@ -899,43 +1023,67 @@ async function renderParentEventCard(
   parentAuthorPubkey: PubkeyHex | null,
   container: HTMLElement,
 ): Promise<void> {
-  container.innerHTML = "";
-  const card: HTMLDivElement = document.createElement("div");
-  card.className = "border border-amber-200 bg-amber-50 rounded-lg p-3";
-  card.textContent = "Loading parent post...";
+  container.innerHTML = '';
+  const card: HTMLDivElement = document.createElement('div');
+  card.className = 'border border-amber-200 bg-amber-50 rounded-lg p-3';
+  card.textContent = 'Loading parent post...';
   container.appendChild(card);
 
   try {
     const relays: string[] = getRelays();
     if (parentAuthorPubkey) {
-      const cachedStatus: boolean | undefined = getCachedDeletionStatus(parentEventId);
+      const cachedStatus: boolean | undefined =
+        getCachedDeletionStatus(parentEventId);
       if (cachedStatus === true) {
-        card.textContent = "Parent post was deleted.";
+        card.textContent = 'Parent post was deleted.';
         return;
       }
       if (cachedStatus === undefined) {
-        checkDeletionAsync(parentEventId, parentAuthorPubkey, relays, card, "Parent post was deleted.");
+        checkDeletionAsync(
+          parentEventId,
+          parentAuthorPubkey,
+          relays,
+          card,
+          'Parent post was deleted.',
+        );
       }
     }
 
-    const parentEvent: NostrEvent | null = await fetchEventWithRetry(parentEventId, relays, 3);
+    const parentEvent: NostrEvent | null = await fetchEventWithRetry(
+      parentEventId,
+      relays,
+      3,
+    );
     if (!parentEvent) {
-      card.textContent = "Failed to load parent post.";
+      card.textContent = 'Failed to load parent post.';
       return;
     }
 
-    const parentProfile: NostrProfile | null = await fetchProfile(parentEvent.pubkey, relays);
+    const parentProfile: NostrProfile | null = await fetchProfile(
+      parentEvent.pubkey,
+      relays,
+    );
     const parentNpub: Npub = nip19.npubEncode(parentEvent.pubkey);
     const parentName: string = getDisplayName(parentNpub, parentProfile);
-    const parentAvatar: string = getAvatarURL(parentEvent.pubkey, parentProfile);
-    const parentContentWithUnicodeEmoji: string = replaceEmojiShortcodes(parentEvent.content);
-    const parentContent: string = replaceCustomEmojiShortcodes(parentContentWithUnicodeEmoji, parentEvent.tags);
-    const preview: string = parentContent.length > 220
-      ? `${parentContent.slice(0, 220)}...`
-      : parentContent;
+    const parentAvatar: string = getAvatarURL(
+      parentEvent.pubkey,
+      parentProfile,
+    );
+    const parentContentWithUnicodeEmoji: string = replaceEmojiShortcodes(
+      parentEvent.content,
+    );
+    const parentContent: string = replaceCustomEmojiShortcodes(
+      parentContentWithUnicodeEmoji,
+      parentEvent.tags,
+    );
+    const preview: string =
+      parentContent.length > 220
+        ? `${parentContent.slice(0, 220)}...`
+        : parentContent;
     const parentPath: string = `/${nip19.neventEncode({ id: parentEvent.id })}`;
 
-    const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
+    const isEnergySavingMode: boolean =
+      localStorage.getItem('energy_saving_mode') === 'true';
     const parentAvatarHtml: string = isEnergySavingMode
       ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
       : `<img
@@ -952,14 +1100,14 @@ async function renderParentEventCard(
           ${parentAvatarHtml}
           <div class="min-w-0">
             <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${parentName}</div>
-            <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${preview || "(no content)"}</div>
+            <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${preview || '(no content)'}</div>
           </div>
         </div>
       </a>
     `;
   } catch (error: unknown) {
-    console.warn("Failed to render parent event card:", error);
-    card.textContent = "Failed to load parent post.";
+    console.warn('Failed to render parent event card:', error);
+    card.textContent = 'Failed to load parent post.';
   }
 }
 
@@ -971,17 +1119,25 @@ async function enrichMentionDisplayNames(
 
   for (const [mentionedRef, mentionedPubkey] of mentionNpubToPubkey.entries()) {
     try {
-      const mentionedProfile: NostrProfile | null = await fetchProfile(mentionedPubkey, relays);
+      const mentionedProfile: NostrProfile | null = await fetchProfile(
+        mentionedPubkey,
+        relays,
+      );
       const mentionedNpub: Npub = nip19.npubEncode(mentionedPubkey);
-      const displayName: string = getDisplayName(mentionedNpub, mentionedProfile);
+      const displayName: string = getDisplayName(
+        mentionedNpub,
+        mentionedProfile,
+      );
 
       // Handle both npub and nprofile mentions
-      const npubAnchors: NodeListOf<HTMLAnchorElement> = eventContainer.querySelectorAll(
-        `a.mention-link[data-mention-npub="${mentionedRef}"]`,
-      );
-      const nprofileAnchors: NodeListOf<HTMLAnchorElement> = eventContainer.querySelectorAll(
-        `a.mention-link[data-mention-nprofile="${mentionedRef}"]`,
-      );
+      const npubAnchors: NodeListOf<HTMLAnchorElement> =
+        eventContainer.querySelectorAll(
+          `a.mention-link[data-mention-npub="${mentionedRef}"]`,
+        );
+      const nprofileAnchors: NodeListOf<HTMLAnchorElement> =
+        eventContainer.querySelectorAll(
+          `a.mention-link[data-mention-nprofile="${mentionedRef}"]`,
+        );
 
       npubAnchors.forEach((anchor: HTMLAnchorElement): void => {
         anchor.textContent = `@${displayName}`;
@@ -990,85 +1146,90 @@ async function enrichMentionDisplayNames(
         anchor.textContent = `@${displayName}`;
       });
     } catch (error: unknown) {
-      console.warn("Failed to resolve mentioned profile:", error);
+      console.warn('Failed to resolve mentioned profile:', error);
     }
   }
 }
 
 async function deleteEventOnRelays(targetEvent: NostrEvent): Promise<void> {
-  const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
   if (!storedPubkey || storedPubkey !== targetEvent.pubkey) {
-    throw new Error("You can only delete your own posts.");
+    throw new Error('You can only delete your own posts.');
   }
 
-  const unsignedEvent: Omit<NostrEvent, "id" | "sig"> = {
+  const unsignedEvent: Omit<NostrEvent, 'id' | 'sig'> = {
     kind: 5,
     pubkey: storedPubkey as PubkeyHex,
     created_at: Math.floor(Date.now() / 1000),
-    tags: [["e", targetEvent.id]],
-    content: "",
+    tags: [['e', targetEvent.id]],
+    content: '',
   };
 
   let signedEvent: NostrEvent;
-  if ((window as any).nostr && (window as any).nostr.signEvent) {
+  if ((window as any).nostr?.signEvent) {
     signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
   } else {
     const privateKey: Uint8Array | null = getSessionPrivateKey();
     if (!privateKey) {
-      throw new Error("No signing method available");
+      throw new Error('No signing method available');
     }
     signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
   }
 
   const relays: string[] = getRelays();
-  const publishPromises = relays.map(async (relayUrl: string): Promise<void> => {
-    try {
-      const socket: WebSocket = createRelayWebSocket(relayUrl);
-      await new Promise<void>((resolve) => {
-        let settled: boolean = false;
-        const finish = (): void => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          socket.close();
-          resolve();
-        };
+  const publishPromises = relays.map(
+    async (relayUrl: string): Promise<void> => {
+      try {
+        const socket: WebSocket = createRelayWebSocket(relayUrl);
+        await new Promise<void>((resolve) => {
+          let settled: boolean = false;
+          const finish = (): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            socket.close();
+            resolve();
+          };
 
-        const timeout = setTimeout(() => {
-          finish();
-        }, 5000);
-
-        socket.onopen = (): void => {
-          socket.send(JSON.stringify(["EVENT", signedEvent]));
-        };
-
-        socket.onmessage = (msg: MessageEvent): void => {
-          const arr: any[] = JSON.parse(msg.data);
-          if (arr[0] === "OK") {
+          const timeout = setTimeout(() => {
             finish();
-          }
-        };
+          }, 5000);
 
-        socket.onerror = (): void => {
-          finish();
-        };
-      });
-    } catch (e) {
-      console.warn(`Failed to publish delete event to ${relayUrl}:`, e);
-    }
-  });
+          socket.onopen = (): void => {
+            socket.send(JSON.stringify(['EVENT', signedEvent]));
+          };
+
+          socket.onmessage = (msg: MessageEvent): void => {
+            const arr: any[] = JSON.parse(msg.data);
+            if (arr[0] === 'OK') {
+              finish();
+            }
+          };
+
+          socket.onerror = (): void => {
+            finish();
+          };
+        });
+      } catch (e) {
+        console.warn(`Failed to publish delete event to ${relayUrl}:`, e);
+      }
+    },
+  );
 
   await Promise.allSettled(publishPromises);
 }
 
-async function renderReferencedEventCards(eventRefs: string[], container: HTMLElement): Promise<void> {
+async function renderReferencedEventCards(
+  eventRefs: string[],
+  container: HTMLElement,
+): Promise<void> {
   const currentRelays: string[] = getRelays();
   const maxCards: number = 3;
 
   for (const eventRef of eventRefs.slice(0, maxCards)) {
-    const card: HTMLDivElement = document.createElement("div");
-    card.className = "border border-indigo-200 bg-indigo-50 rounded-lg p-3";
-    card.textContent = "Loading referenced event...";
+    const card: HTMLDivElement = document.createElement('div');
+    card.className = 'border border-indigo-200 bg-indigo-50 rounded-lg p-3';
+    card.textContent = 'Loading referenced event...';
     container.appendChild(card);
 
     try {
@@ -1076,58 +1237,83 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
       let eventId: string | undefined;
       let relayHints: string[] = [];
       let referencedAuthorPubkey: PubkeyHex | null = null;
-      if (decoded.type === "nevent") {
+      if (decoded.type === 'nevent') {
         const data: any = decoded.data;
-        eventId = data?.id || (typeof data === "string" ? data : undefined);
+        eventId = data?.id || (typeof data === 'string' ? data : undefined);
         relayHints = Array.isArray(data?.relays) ? data.relays : [];
-        if (data?.author && typeof data.author === "string") {
+        if (data?.author && typeof data.author === 'string') {
           referencedAuthorPubkey = data.author as PubkeyHex;
         }
-      } else if (decoded.type === "note") {
-        eventId = typeof decoded.data === "string" ? decoded.data : undefined;
+      } else if (decoded.type === 'note') {
+        eventId = typeof decoded.data === 'string' ? decoded.data : undefined;
       } else {
-        card.textContent = "Referenced event is invalid.";
+        card.textContent = 'Referenced event is invalid.';
         continue;
       }
 
       if (!eventId) {
-        card.textContent = "Referenced event ID is missing.";
+        card.textContent = 'Referenced event ID is missing.';
         continue;
       }
 
-      const relaysToUse: string[] = relayHints.length > 0 ? relayHints : currentRelays;
+      const relaysToUse: string[] =
+        relayHints.length > 0 ? relayHints : currentRelays;
       if (referencedAuthorPubkey) {
-        const cachedStatus: boolean | undefined = getCachedDeletionStatus(eventId);
+        const cachedStatus: boolean | undefined =
+          getCachedDeletionStatus(eventId);
         if (cachedStatus === true) {
-          card.textContent = "Referenced event was deleted.";
+          card.textContent = 'Referenced event was deleted.';
           continue;
         }
         if (cachedStatus === undefined) {
-          checkDeletionAsync(eventId, referencedAuthorPubkey, relaysToUse, card, "Referenced event was deleted.");
+          checkDeletionAsync(
+            eventId,
+            referencedAuthorPubkey,
+            relaysToUse,
+            card,
+            'Referenced event was deleted.',
+          );
         }
       }
 
-      const referencedEvent: NostrEvent | null = await fetchEventWithRetry(eventId, relaysToUse, 3);
+      const referencedEvent: NostrEvent | null = await fetchEventWithRetry(
+        eventId,
+        relaysToUse,
+        3,
+      );
       if (!referencedEvent) {
-        card.textContent = "Failed to load referenced event.";
+        card.textContent = 'Failed to load referenced event.';
         continue;
       }
 
-      const referencedProfile: NostrProfile | null = await fetchProfile(referencedEvent.pubkey, relaysToUse);
+      const referencedProfile: NostrProfile | null = await fetchProfile(
+        referencedEvent.pubkey,
+        relaysToUse,
+      );
       const referencedNpub: Npub = nip19.npubEncode(referencedEvent.pubkey);
-      const referencedName: string = getDisplayName(referencedNpub, referencedProfile);
-      const referencedAvatar: string = getAvatarURL(referencedEvent.pubkey, referencedProfile);
-      const referencedContentWithUnicodeEmoji: string = replaceEmojiShortcodes(referencedEvent.content);
+      const referencedName: string = getDisplayName(
+        referencedNpub,
+        referencedProfile,
+      );
+      const referencedAvatar: string = getAvatarURL(
+        referencedEvent.pubkey,
+        referencedProfile,
+      );
+      const referencedContentWithUnicodeEmoji: string = replaceEmojiShortcodes(
+        referencedEvent.content,
+      );
       const referencedContent: string = replaceCustomEmojiShortcodes(
         referencedContentWithUnicodeEmoji,
         referencedEvent.tags,
       );
-      const referencedText: string = referencedContent.length > 180
-        ? `${referencedContent.slice(0, 180)}...`
-        : referencedContent;
+      const referencedText: string =
+        referencedContent.length > 180
+          ? `${referencedContent.slice(0, 180)}...`
+          : referencedContent;
       const referencedPath: string = `/${eventRef}`;
 
-      const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
+      const isEnergySavingMode: boolean =
+        localStorage.getItem('energy_saving_mode') === 'true';
       const referencedAvatarHtml: string = isEnergySavingMode
         ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
         : `<img
@@ -1143,35 +1329,38 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
                         ${referencedAvatarHtml}
                         <div class="min-w-0">
                             <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${referencedName}</div>
-                            <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${referencedText || "(no content)"}</div>
+                            <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${referencedText || '(no content)'}</div>
                         </div>
                     </div>
                 </a>
             `;
     } catch (error: unknown) {
-      console.warn("Failed to render referenced event card:", error);
-      card.textContent = "Failed to load referenced event.";
+      console.warn('Failed to render referenced event card:', error);
+      card.textContent = 'Failed to load referenced event.';
     }
   }
 }
 
 function renderOGPCard(ogpData: OGPResponse, container: HTMLElement): void {
-  const title: string = ogpData.data["og:title"] || ogpData.data.title || "No title";
-  const description: string = ogpData.data["og:description"] || ogpData.data.description || "";
-  const image: string | undefined = ogpData.data["og:image"];
-  const siteName: string = ogpData.data["og:site_name"] || "";
+  const title: string =
+    ogpData.data['og:title'] || ogpData.data.title || 'No title';
+  const description: string =
+    ogpData.data['og:description'] || ogpData.data.description || '';
+  const image: string | undefined = ogpData.data['og:image'];
+  const siteName: string = ogpData.data['og:site_name'] || '';
   const url: string = ogpData.url;
 
-  const card: HTMLDivElement = document.createElement("div");
-  card.className = "border border-gray-300 rounded-lg overflow-hidden my-2 hover:shadow-md transition-shadow bg-white";
+  const card: HTMLDivElement = document.createElement('div');
+  card.className =
+    'border border-gray-300 rounded-lg overflow-hidden my-2 hover:shadow-md transition-shadow bg-white';
 
   card.innerHTML = `
         <a href="${url}" target="_blank" rel="noopener noreferrer" class="block no-underline">
-            ${image ? `<img src="${image}" alt="${title}" class="w-full h-48 object-cover" loading="lazy" onerror="this.style.display='none';" />` : ""}
+            ${image ? `<img src="${image}" alt="${title}" class="w-full h-48 object-cover" loading="lazy" onerror="this.style.display='none';" />` : ''}
             <div class="p-3">
-                ${siteName ? `<div class="text-xs text-gray-500 mb-1">${siteName}</div>` : ""}
+                ${siteName ? `<div class="text-xs text-gray-500 mb-1">${siteName}</div>` : ''}
                 <div class="font-semibold text-gray-900 text-sm mb-1 line-clamp-2">${title}</div>
-                ${description ? `<div class="text-xs text-gray-600 line-clamp-2">${description}</div>` : ""}
+                ${description ? `<div class="text-xs text-gray-600 line-clamp-2">${description}</div>` : ''}
             </div>
         </a>
     `;
@@ -1180,8 +1369,8 @@ function renderOGPCard(ogpData: OGPResponse, container: HTMLElement): void {
 }
 
 function renderTwitterEmbed(embedHTML: string, container: HTMLElement): void {
-  const wrapper: HTMLDivElement = document.createElement("div");
-  wrapper.className = "my-2";
+  const wrapper: HTMLDivElement = document.createElement('div');
+  wrapper.className = 'my-2';
   wrapper.innerHTML = embedHTML;
   container.appendChild(wrapper);
 }

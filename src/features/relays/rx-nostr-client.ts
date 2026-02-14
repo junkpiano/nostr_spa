@@ -1,5 +1,5 @@
-import { createRxNostr, createRxBackwardReq, type RxNostr } from 'rx-nostr';
 import { verifyEvent } from 'nostr-tools';
+import { createRxBackwardReq, createRxNostr, type RxNostr } from 'rx-nostr';
 import { getRelays, recordRelayFailure, recordRelaySuccess } from './relays.js';
 
 let rxNostr: RxNostr | null = null;
@@ -45,7 +45,9 @@ export function syncRelayConnections(): void {
  * Create a backward REQ for fetching historical events
  */
 export function createBackwardReq(subId?: string) {
-  return createRxBackwardReq(subId || `sub-${Math.random().toString(36).slice(2)}`);
+  return createRxBackwardReq(
+    subId || `sub-${Math.random().toString(36).slice(2)}`,
+  );
 }
 
 /**

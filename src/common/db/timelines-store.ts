@@ -1,22 +1,27 @@
-import type { PubkeyHex } from "../../../types/nostr.js";
+import type { PubkeyHex } from '../../../types/nostr.js';
 import {
   createTransaction,
+  isIndexedDBAvailable,
   requestToPromise,
   transactionToPromise,
-  isIndexedDBAvailable,
-} from "./indexeddb.js";
-import { STORE_NAMES, LIMITS, type Timeline, type TimelineType } from "./types.js";
+} from './indexeddb.js';
+import {
+  LIMITS,
+  STORE_NAMES,
+  type Timeline,
+  type TimelineType,
+} from './types.js';
 
 /**
  * Generates a timeline key from type and optional pubkey
  */
 export function getTimelineKey(type: TimelineType, pubkey?: PubkeyHex): string {
   switch (type) {
-    case "home":
+    case 'home':
       return `home:${pubkey}`;
-    case "global":
-      return "global";
-    case "user":
+    case 'global':
+      return 'global';
+    case 'user':
       return `user:${pubkey}`;
   }
 }
@@ -28,7 +33,7 @@ export async function storeTimeline(timeline: Timeline): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
 
     timeline.updatedAt = Date.now();
@@ -36,7 +41,7 @@ export async function storeTimeline(timeline: Timeline): Promise<void> {
 
     await transactionToPromise(tx);
   } catch (error) {
-    console.error("[TimelinesStore] Failed to store timeline:", error);
+    console.error('[TimelinesStore] Failed to store timeline:', error);
   }
 }
 
@@ -45,22 +50,22 @@ export async function storeTimeline(timeline: Timeline): Promise<void> {
  */
 export async function getTimeline(
   type: TimelineType,
-  pubkey?: PubkeyHex
+  pubkey?: PubkeyHex,
 ): Promise<Timeline | null> {
   if (!isIndexedDBAvailable()) return null;
 
   try {
     const key = getTimelineKey(type, pubkey);
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readonly");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readonly');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
 
     const timeline = await requestToPromise<Timeline | undefined>(
-      store.get(key)
+      store.get(key),
     );
 
     return timeline || null;
   } catch (error) {
-    console.error("[TimelinesStore] Failed to get timeline:", error);
+    console.error('[TimelinesStore] Failed to get timeline:', error);
     return null;
   }
 }
@@ -72,17 +77,17 @@ export async function prependEventsToTimeline(
   type: TimelineType,
   pubkey: PubkeyHex | undefined,
   eventIds: string[],
-  newestTimestamp: number
+  newestTimestamp: number,
 ): Promise<void> {
   if (!isIndexedDBAvailable() || eventIds.length === 0) return;
 
   try {
     const key = getTimelineKey(type, pubkey);
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
 
     const existing = await requestToPromise<Timeline | undefined>(
-      store.get(key)
+      store.get(key),
     );
 
     if (existing) {
@@ -92,7 +97,7 @@ export async function prependEventsToTimeline(
       existing.eventIds = [...newEventIds, ...existing.eventIds];
       existing.newestTimestamp = Math.max(
         existing.newestTimestamp,
-        newestTimestamp
+        newestTimestamp,
       );
       existing.updatedAt = Date.now();
       store.put(existing);
@@ -112,7 +117,10 @@ export async function prependEventsToTimeline(
 
     await transactionToPromise(tx);
   } catch (error) {
-    console.error("[TimelinesStore] Failed to prepend events to timeline:", error);
+    console.error(
+      '[TimelinesStore] Failed to prepend events to timeline:',
+      error,
+    );
   }
 }
 
@@ -123,17 +131,17 @@ export async function appendEventsToTimeline(
   type: TimelineType,
   pubkey: PubkeyHex | undefined,
   eventIds: string[],
-  oldestTimestamp: number
+  oldestTimestamp: number,
 ): Promise<void> {
   if (!isIndexedDBAvailable() || eventIds.length === 0) return;
 
   try {
     const key = getTimelineKey(type, pubkey);
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
 
     const existing = await requestToPromise<Timeline | undefined>(
-      store.get(key)
+      store.get(key),
     );
 
     if (existing) {
@@ -143,7 +151,7 @@ export async function appendEventsToTimeline(
       existing.eventIds = [...existing.eventIds, ...newEventIds];
       existing.oldestTimestamp = Math.min(
         existing.oldestTimestamp,
-        oldestTimestamp
+        oldestTimestamp,
       );
       existing.updatedAt = Date.now();
       store.put(existing);
@@ -163,7 +171,10 @@ export async function appendEventsToTimeline(
 
     await transactionToPromise(tx);
   } catch (error) {
-    console.error("[TimelinesStore] Failed to append events to timeline:", error);
+    console.error(
+      '[TimelinesStore] Failed to append events to timeline:',
+      error,
+    );
   }
 }
 
@@ -173,17 +184,17 @@ export async function appendEventsToTimeline(
 export async function removeEventFromTimeline(
   type: TimelineType,
   pubkey: PubkeyHex | undefined,
-  eventId: string
+  eventId: string,
 ): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
     const key = getTimelineKey(type, pubkey);
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
 
     const existing = await requestToPromise<Timeline | undefined>(
-      store.get(key)
+      store.get(key),
     );
 
     if (existing) {
@@ -194,7 +205,10 @@ export async function removeEventFromTimeline(
 
     await transactionToPromise(tx);
   } catch (error) {
-    console.error("[TimelinesStore] Failed to remove event from timeline:", error);
+    console.error(
+      '[TimelinesStore] Failed to remove event from timeline:',
+      error,
+    );
   }
 }
 
@@ -205,7 +219,7 @@ export async function getAllTimelines(): Promise<Timeline[]> {
   if (!isIndexedDBAvailable()) return [];
 
   try {
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readonly");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readonly');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
 
     return new Promise<Timeline[]>((resolve, reject) => {
@@ -226,7 +240,7 @@ export async function getAllTimelines(): Promise<Timeline[]> {
       cursorRequest.onerror = (): void => reject(cursorRequest.error);
     });
   } catch (error) {
-    console.error("[TimelinesStore] Failed to get all timelines:", error);
+    console.error('[TimelinesStore] Failed to get all timelines:', error);
     return [];
   }
 }
@@ -238,11 +252,11 @@ export async function countTimelines(): Promise<number> {
   if (!isIndexedDBAvailable()) return 0;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readonly");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readonly');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
     return await requestToPromise<number>(store.count());
   } catch (error) {
-    console.error("[TimelinesStore] Failed to count timelines:", error);
+    console.error('[TimelinesStore] Failed to count timelines:', error);
     return 0;
   }
 }
@@ -259,9 +273,9 @@ export async function pruneTimelines(): Promise<number> {
       return 0; // No pruning needed
     }
 
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
-    const index = store.index("updatedAt");
+    const index = store.index('updatedAt');
 
     const toDelete = count - LIMITS.TIMELINES;
     let deleted = 0;
@@ -280,7 +294,7 @@ export async function pruneTimelines(): Promise<number> {
         const timeline = cursor.value as Timeline;
 
         // Don't delete current user's home timeline or global timeline
-        if (timeline.type !== "home" && timeline.type !== "global") {
+        if (timeline.type !== 'home' && timeline.type !== 'global') {
           cursor.delete();
           deleted++;
         }
@@ -291,7 +305,7 @@ export async function pruneTimelines(): Promise<number> {
       cursorRequest.onerror = (): void => reject(cursorRequest.error);
     });
   } catch (error) {
-    console.error("[TimelinesStore] Failed to prune timelines:", error);
+    console.error('[TimelinesStore] Failed to prune timelines:', error);
     return 0;
   }
 }
@@ -303,12 +317,12 @@ export async function clearTimelines(): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
     await requestToPromise(store.clear());
-    console.log("[TimelinesStore] Cleared all timelines");
+    console.log('[TimelinesStore] Cleared all timelines');
   } catch (error) {
-    console.error("[TimelinesStore] Failed to clear timelines:", error);
+    console.error('[TimelinesStore] Failed to clear timelines:', error);
   }
 }
 
@@ -317,17 +331,17 @@ export async function clearTimelines(): Promise<void> {
  */
 export async function deleteTimeline(
   type: TimelineType,
-  pubkey?: PubkeyHex
+  pubkey?: PubkeyHex,
 ): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
     const key = getTimelineKey(type, pubkey);
-    const tx = await createTransaction(STORE_NAMES.TIMELINES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.TIMELINES);
     await requestToPromise(store.delete(key));
     console.log(`[TimelinesStore] Deleted timeline: ${key}`);
   } catch (error) {
-    console.error("[TimelinesStore] Failed to delete timeline:", error);
+    console.error('[TimelinesStore] Failed to delete timeline:', error);
   }
 }

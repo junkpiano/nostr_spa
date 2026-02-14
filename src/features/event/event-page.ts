@@ -1,12 +1,27 @@
 import { nip19 } from 'nostr-tools';
-import { fetchProfile } from "../profile/profile.js";
-import { fetchEventById, fetchRepliesForEvent, isEventDeleted } from "../../common/events-queries.js";
-import { loadReactionsForEvent, renderEvent } from "../../common/event-render.js";
-import { setEventMeta } from "../../common/meta.js";
-import { setActiveNav } from "../../common/navigation.js";
-import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
-import { getProfile as getCachedProfile, getEvent as getCachedEvent } from "../../common/db/index.js";
-import type { NostrEvent, NostrProfile, PubkeyHex, Npub } from "../../../types/nostr";
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  PubkeyHex,
+} from '../../../types/nostr';
+import {
+  getEvent as getCachedEvent,
+  getProfile as getCachedProfile,
+} from '../../common/db/index.js';
+import {
+  loadReactionsForEvent,
+  renderEvent,
+} from '../../common/event-render.js';
+import {
+  fetchEventById,
+  fetchRepliesForEvent,
+  isEventDeleted,
+} from '../../common/events-queries.js';
+import { setEventMeta } from '../../common/meta.js';
+import { setActiveNav } from '../../common/navigation.js';
+import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
+import { fetchProfile } from '../profile/profile.js';
 
 interface LoadEventPageOptions {
   eventRef: string;
@@ -19,7 +34,9 @@ interface LoadEventPageOptions {
   isRouteActive?: () => boolean;
 }
 
-export async function loadEventPage(options: LoadEventPageOptions): Promise<void> {
+export async function loadEventPage(
+  options: LoadEventPageOptions,
+): Promise<void> {
   const isRouteActive: () => boolean = options.isRouteActive || (() => true);
   if (!isRouteActive()) {
     return;
@@ -28,46 +45,59 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
   options.stopBackgroundFetch();
   options.clearNotification();
 
-  const homeButton: HTMLElement | null = document.getElementById("nav-home");
-  const globalButton: HTMLElement | null = document.getElementById("nav-global");
-  const relaysButton: HTMLElement | null = document.getElementById("nav-relays");
-  const profileLink: HTMLElement | null = document.getElementById("nav-profile");
-  const settingsButton: HTMLElement | null = document.getElementById("nav-settings");
-  setActiveNav(homeButton, globalButton, relaysButton, profileLink, settingsButton, null);
+  const homeButton: HTMLElement | null = document.getElementById('nav-home');
+  const globalButton: HTMLElement | null =
+    document.getElementById('nav-global');
+  const relaysButton: HTMLElement | null =
+    document.getElementById('nav-relays');
+  const profileLink: HTMLElement | null =
+    document.getElementById('nav-profile');
+  const settingsButton: HTMLElement | null =
+    document.getElementById('nav-settings');
+  setActiveNav(
+    homeButton,
+    globalButton,
+    relaysButton,
+    profileLink,
+    settingsButton,
+    null,
+  );
 
-  const postsHeader: HTMLElement | null = document.getElementById("posts-header");
+  const postsHeader: HTMLElement | null =
+    document.getElementById('posts-header');
   if (postsHeader) {
-    postsHeader.textContent = "Event";
-    postsHeader.style.display = "";
+    postsHeader.textContent = 'Event';
+    postsHeader.style.display = '';
   }
 
   if (options.profileSection) {
-    options.profileSection.innerHTML = "";
-    options.profileSection.className = "";
+    options.profileSection.innerHTML = '';
+    options.profileSection.className = '';
   }
 
   try {
     const decoded = nip19.decode(options.eventRef);
     let eventId: string | undefined;
     let relayHints: string[] = [];
-    if (decoded.type === "nevent") {
+    if (decoded.type === 'nevent') {
       const data: any = decoded.data;
-      eventId = data?.id || (typeof data === "string" ? data : undefined);
+      eventId = data?.id || (typeof data === 'string' ? data : undefined);
       relayHints = Array.isArray(data?.relays) ? data.relays : [];
-    } else if (decoded.type === "note") {
-      eventId = typeof decoded.data === "string" ? decoded.data : undefined;
+    } else if (decoded.type === 'note') {
+      eventId = typeof decoded.data === 'string' ? decoded.data : undefined;
     } else {
-      throw new Error("Invalid event format");
+      throw new Error('Invalid event format');
     }
     if (!eventId) {
-      throw new Error("Missing event id");
+      throw new Error('Missing event id');
     }
 
-    const relaysToUse: string[] = relayHints.length > 0 ? relayHints : options.relays;
+    const relaysToUse: string[] =
+      relayHints.length > 0 ? relayHints : options.relays;
 
     // Try to load event from IndexedDB cache first
     let event: NostrEvent | null = await getCachedEvent(eventId);
-    let fromCache = !!event;
+    const _fromCache = !!event;
 
     // Only show loading spinner if not in cache
     if (!event && options.output) {
@@ -91,11 +121,12 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
 
     if (!options.output) return;
     if (!isRouteActive()) return; // Guard before DOM update
-    options.output.innerHTML = "";
+    options.output.innerHTML = '';
 
     if (!event) {
       if (!isRouteActive()) return; // Guard before DOM update
-      options.output.innerHTML = "<p class='text-red-500'>Event not found on the configured relays.</p>";
+      options.output.innerHTML =
+        "<p class='text-red-500'>Event not found on the configured relays.</p>";
       return;
     }
 
@@ -103,14 +134,22 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     setEventMeta(event, npubStr);
 
     // Try to get profile from IndexedDB cache first for instant render
-    const cachedProfile: NostrProfile | null = await getCachedProfile(event.pubkey);
+    const cachedProfile: NostrProfile | null = await getCachedProfile(
+      event.pubkey,
+    );
     if (!isRouteActive()) return; // Guard before render
     renderEvent(event, cachedProfile, npubStr, event.pubkey, options.output);
 
     // Start loading reactions immediately in parallel (don't wait)
-    const reactionsContainer: HTMLElement | null = options.output.querySelector(".reactions-container");
+    const reactionsContainer: HTMLElement | null = options.output.querySelector(
+      '.reactions-container',
+    );
     const reactionsPromise = reactionsContainer
-      ? loadReactionsForEvent(event.id, event.pubkey as PubkeyHex, reactionsContainer)
+      ? loadReactionsForEvent(
+          event.id,
+          event.pubkey as PubkeyHex,
+          reactionsContainer,
+        )
       : Promise.resolve();
 
     // Run slow checks/metadata fetches in parallel after first paint.
@@ -125,16 +164,22 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
 
     if (deleted) {
       if (!isRouteActive()) return; // Guard before DOM update
-      options.output.innerHTML = "<p class='text-gray-600'>This event was deleted by the author.</p>";
+      options.output.innerHTML =
+        "<p class='text-gray-600'>This event was deleted by the author.</p>";
       return;
     }
 
     // Update profile if we got one from relays (whether cached or not)
     if (eventProfile) {
       if (!isRouteActive()) return; // Guard before DOM update
-      const eventCard: HTMLElement | null = options.output.querySelector(".event-container");
-      const nameEl: HTMLElement | null = eventCard?.querySelector(".event-username") as HTMLElement | null;
-      const avatarEl: HTMLImageElement | null = eventCard?.querySelector(".event-avatar") as HTMLImageElement | null;
+      const eventCard: HTMLElement | null =
+        options.output.querySelector('.event-container');
+      const nameEl: HTMLElement | null = eventCard?.querySelector(
+        '.event-username',
+      ) as HTMLElement | null;
+      const avatarEl: HTMLImageElement | null = eventCard?.querySelector(
+        '.event-avatar',
+      ) as HTMLImageElement | null;
       if (nameEl) {
         nameEl.textContent = `👤 ${getDisplayName(npubStr, eventProfile)}`;
       }
@@ -151,23 +196,28 @@ export async function loadEventPage(options: LoadEventPageOptions): Promise<void
     // Wait for reactions and replies in parallel
     await Promise.all([
       reactionsPromise,
-      renderReplyTree(event, relaysToUse, options.output, isRouteActive)
+      renderReplyTree(event, relaysToUse, options.output, isRouteActive),
     ]);
   } catch (error: unknown) {
-    console.error("Failed to load nevent:", error);
+    console.error('Failed to load nevent:', error);
     if (options.output) {
-      options.output.innerHTML = "<p class='text-red-500'>Failed to load event.</p>";
+      options.output.innerHTML =
+        "<p class='text-red-500'>Failed to load event.</p>";
     }
   }
 }
 
 function resolveReplyParentId(event: NostrEvent): string | null {
-  const eTags: string[][] = event.tags.filter((tag: string[]): boolean => tag[0] === "e");
+  const eTags: string[][] = event.tags.filter(
+    (tag: string[]): boolean => tag[0] === 'e',
+  );
   if (eTags.length === 0) {
     return null;
   }
 
-  const replyTag: string[] | undefined = eTags.find((tag: string[]): boolean => tag[3] === "reply");
+  const replyTag: string[] | undefined = eTags.find(
+    (tag: string[]): boolean => tag[3] === 'reply',
+  );
   if (replyTag?.[1]) {
     return replyTag[1];
   }
@@ -184,17 +234,20 @@ async function renderReplyTree(
   // Check if route is still active before fetching
   if (!isRouteActive()) return;
 
-  const replies: NostrEvent[] = await fetchRepliesForEvent(rootEvent.id, relays);
+  const replies: NostrEvent[] = await fetchRepliesForEvent(
+    rootEvent.id,
+    relays,
+  );
   if (!isRouteActive()) return; // Guard before DOM update
-  const section: HTMLDivElement = document.createElement("div");
-  section.className = "mt-6";
+  const section: HTMLDivElement = document.createElement('div');
+  section.className = 'mt-6';
   section.innerHTML = `<h3 class="text-lg font-semibold mb-3">Replies</h3>`;
   output.appendChild(section);
 
   if (replies.length === 0) {
-    const empty: HTMLDivElement = document.createElement("div");
-    empty.className = "text-sm text-gray-500";
-    empty.textContent = "No replies yet.";
+    const empty: HTMLDivElement = document.createElement('div');
+    empty.className = 'text-sm text-gray-500';
+    empty.textContent = 'No replies yet.';
     section.appendChild(empty);
     return;
   }
@@ -209,9 +262,10 @@ async function renderReplyTree(
 
   replies.forEach((event: NostrEvent): void => {
     const parentId: string | null = resolveReplyParentId(event);
-    const attachTo: string = parentId && (parentId === rootEvent.id || byId.has(parentId))
-      ? parentId
-      : rootEvent.id;
+    const attachTo: string =
+      parentId && (parentId === rootEvent.id || byId.has(parentId))
+        ? parentId
+        : rootEvent.id;
 
     if (attachTo === rootEvent.id) {
       roots.push(event);
@@ -222,7 +276,9 @@ async function renderReplyTree(
     }
   });
 
-  const allPubkeys: PubkeyHex[] = Array.from(new Set(replies.map((event: NostrEvent): PubkeyHex => event.pubkey)));
+  const allPubkeys: PubkeyHex[] = Array.from(
+    new Set(replies.map((event: NostrEvent): PubkeyHex => event.pubkey)),
+  );
   const profiles: Map<PubkeyHex, NostrProfile | null> = new Map();
 
   // First, try to get profiles from IndexedDB cache
@@ -248,34 +304,42 @@ async function renderReplyTree(
 
   const renderNode = (event: NostrEvent, depth: number): void => {
     if (!isRouteActive()) return; // Guard before DOM operations
-    const wrapper: HTMLDivElement = document.createElement("div");
-    wrapper.className = "mt-4";
+    const wrapper: HTMLDivElement = document.createElement('div');
+    wrapper.className = 'mt-4';
     if (depth > 0) {
-      wrapper.classList.add("border-l", "border-gray-200", "pl-4");
+      wrapper.classList.add('border-l', 'border-gray-200', 'pl-4');
       wrapper.style.marginLeft = `${depth * 16}px`;
     }
 
-    const temp: HTMLDivElement = document.createElement("div");
+    const temp: HTMLDivElement = document.createElement('div');
     const npub: Npub = nip19.npubEncode(event.pubkey);
     const profile: NostrProfile | null = profiles.get(event.pubkey) || null;
     renderEvent(event, profile, npub, event.pubkey as PubkeyHex, temp);
     const card: Element | null = temp.firstElementChild;
     if (card instanceof HTMLElement) {
-      const parentContainer: HTMLElement | null = card.querySelector(".parent-event-container");
+      const parentContainer: HTMLElement | null = card.querySelector(
+        '.parent-event-container',
+      );
       if (parentContainer) {
-        parentContainer.style.display = "none";
+        parentContainer.style.display = 'none';
       }
       wrapper.appendChild(card);
     }
     section.appendChild(wrapper);
 
     const childEvents: NostrEvent[] = children.get(event.id) || [];
-    childEvents.sort((a: NostrEvent, b: NostrEvent): number => a.created_at - b.created_at);
+    childEvents.sort(
+      (a: NostrEvent, b: NostrEvent): number => a.created_at - b.created_at,
+    );
     childEvents.forEach((child: NostrEvent): void => {
       renderNode(child, depth + 1);
     });
   };
 
-  roots.sort((a: NostrEvent, b: NostrEvent): number => a.created_at - b.created_at);
-  roots.forEach((event: NostrEvent): void => renderNode(event, 0));
+  roots.sort(
+    (a: NostrEvent, b: NostrEvent): number => a.created_at - b.created_at,
+  );
+  roots.forEach((event: NostrEvent): void => {
+    renderNode(event, 0);
+  });
 }

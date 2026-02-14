@@ -1,19 +1,24 @@
 import { nip19 } from 'nostr-tools';
 import type { EventPacket } from 'rx-nostr';
-import { getAvatarURL, getDisplayName } from "../../utils/utils.js";
-import { fetchProfile } from "../profile/profile.js";
-import { renderEvent } from "../../common/event-render.js";
-import { fetchingProfiles, profileCache } from "../../common/timeline-cache.js";
-import { getRxNostr, createBackwardReq } from "../relays/rx-nostr-client.js";
-import { getRelays } from "../relays/relays.js";
-import type { NostrProfile, PubkeyHex, Npub, NostrEvent } from "../../../types/nostr";
+import type {
+  NostrEvent,
+  NostrProfile,
+  Npub,
+  PubkeyHex,
+} from '../../../types/nostr';
 import {
-  getCachedTimeline,
-  storeEvents,
-  prependEventsToTimeline,
   appendEventsToTimeline,
-  getProfile as getCachedProfile
-} from "../../common/db/index.js";
+  getProfile as getCachedProfile,
+  getCachedTimeline,
+  prependEventsToTimeline,
+  storeEvents,
+} from '../../common/db/index.js';
+import { renderEvent } from '../../common/event-render.js';
+import { fetchingProfiles, profileCache } from '../../common/timeline-cache.js';
+import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
+import { fetchProfile } from '../profile/profile.js';
+import { getRelays } from '../relays/relays.js';
+import { createBackwardReq, getRxNostr } from '../relays/rx-nostr-client.js';
 
 export async function loadHomeTimeline(
   followedPubkeys: PubkeyHex[],
@@ -35,7 +40,7 @@ export async function loadHomeTimeline(
     return;
   }
   let flushScheduled: boolean = false;
-  let pendingRelays: number = relays.length;
+  const _pendingRelays: number = relays.length;
   const bufferedEvents: NostrEvent[] = [];
   const renderedEventIds: Set<string> = new Set();
   let finalized: boolean = false;
@@ -60,7 +65,7 @@ export async function loadHomeTimeline(
 
   if (isInitialLoad && userPubkey) {
     try {
-      const cached = await getCachedTimeline("home", userPubkey, { limit: 50 });
+      const cached = await getCachedTimeline('home', userPubkey, { limit: 50 });
       const cacheAgeMinutes = cached.hasCache
         ? Math.floor((Date.now() / 1000 - cached.newestTimestamp) / 60)
         : 0;
@@ -70,36 +75,43 @@ export async function loadHomeTimeline(
       const isCacheStale = cacheAgeMinutes > CACHE_MAX_AGE_MINUTES;
 
       if (cached.hasCache && cached.events.length > 0) {
-        console.log(`[HomeTimeline] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`);
+        console.log(
+          `[HomeTimeline] Loaded ${cached.events.length} events from cache (age: ${cacheAgeMinutes} minutes, ${isCacheStale ? 'STALE' : 'fresh'})`,
+        );
 
         if (isCacheStale) {
-          console.log(`[HomeTimeline] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`);
+          console.log(
+            `[HomeTimeline] Cache is stale (>${CACHE_MAX_AGE_MINUTES}m), skipping cache display`,
+          );
           // Don't display stale cache, go straight to fresh relay fetch
         } else {
           if (!routeIsActive()) return; // Guard before DOM update
           clearedPlaceholder = true;
-          output.innerHTML = "";
+          output.innerHTML = '';
 
           // Render cached events
           // Check route once before loop to avoid partial state updates
           if (routeIsActive()) {
             for (const event of cached.events) {
-              if (renderedEventIds.has(event.id) || seenEventIds.has(event.id)) {
+              if (
+                renderedEventIds.has(event.id) ||
+                seenEventIds.has(event.id)
+              ) {
                 continue;
               }
               renderedEventIds.add(event.id);
               seenEventIds.add(event.id);
 
-          // Try to get profile from IndexedDB cache
-          let profile: NostrProfile | null = null;
-          if (profileCache.has(event.pubkey)) {
-            profile = profileCache.get(event.pubkey) || null;
-          } else {
-            profile = await getCachedProfile(event.pubkey as PubkeyHex);
-            if (profile) {
-              profileCache.set(event.pubkey, profile);
-            }
-          }
+              // Try to get profile from IndexedDB cache
+              let profile: NostrProfile | null = null;
+              if (profileCache.has(event.pubkey)) {
+                profile = profileCache.get(event.pubkey) || null;
+              } else {
+                profile = await getCachedProfile(event.pubkey as PubkeyHex);
+                if (profile) {
+                  profileCache.set(event.pubkey, profile);
+                }
+              }
 
               const npubStr: Npub = nip19.npubEncode(event.pubkey);
               renderEvent(event, profile, npubStr, event.pubkey, output);
@@ -108,7 +120,7 @@ export async function loadHomeTimeline(
 
           // Hide connecting message since we have cached content
           if (connectingMsg) {
-            connectingMsg.style.display = "none";
+            connectingMsg.style.display = 'none';
           }
 
           // IMPORTANT: Don't update untilTimestamp from cache on initial load
@@ -117,32 +129,34 @@ export async function loadHomeTimeline(
         }
       }
     } catch (error) {
-      console.error("[HomeTimeline] Failed to load from cache:", error);
+      console.error('[HomeTimeline] Failed to load from cache:', error);
       // Continue with relay fetch
     }
   }
   // === End cache-first loading ===
 
-  const loadMoreBtn: HTMLElement | null = document.getElementById("load-more");
+  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
 
   if (connectingMsg) {
-    connectingMsg.style.display = ""; // Show connecting message
+    connectingMsg.style.display = ''; // Show connecting message
   }
 
   if (loadMoreBtn) {
     (loadMoreBtn as HTMLButtonElement).disabled = true;
-    loadMoreBtn.classList.add("opacity-50", "cursor-not-allowed");
+    loadMoreBtn.classList.add('opacity-50', 'cursor-not-allowed');
   }
 
   const flushBufferedEvents = (): void => {
     if (!routeIsActive()) {
       return;
     }
-    bufferedEvents.sort((a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at);
+    bufferedEvents.sort(
+      (a: NostrEvent, b: NostrEvent): number => b.created_at - a.created_at,
+    );
 
     if (!clearedPlaceholder && bufferedEvents.length > 0) {
       if (!routeIsActive()) return; // Guard before DOM update
-      output.innerHTML = "";
+      output.innerHTML = '';
       clearedPlaceholder = true;
     }
 
@@ -154,8 +168,12 @@ export async function loadHomeTimeline(
       renderedEventIds.add(event.id);
 
       // Fetch profile for this event's author if not cached
-      let profile: NostrProfile | null = profileCache.get(event.pubkey) || null;
-      if (!profileCache.has(event.pubkey) && !fetchingProfiles.has(event.pubkey)) {
+      const profile: NostrProfile | null =
+        profileCache.get(event.pubkey) || null;
+      if (
+        !profileCache.has(event.pubkey) &&
+        !fetchingProfiles.has(event.pubkey)
+      ) {
         fetchingProfiles.add(event.pubkey);
         fetchProfile(event.pubkey, relays)
           .then((fetchedProfile: NostrProfile | null): void => {
@@ -163,18 +181,24 @@ export async function loadHomeTimeline(
             profileCache.set(event.pubkey, fetchedProfile);
             fetchingProfiles.delete(event.pubkey);
             // Update the rendered event with the fetched profile
-            const eventElements: NodeListOf<Element> = output.querySelectorAll(".event-container");
+            const eventElements: NodeListOf<Element> =
+              output.querySelectorAll('.event-container');
             eventElements.forEach((el: Element): void => {
               if ((el as HTMLElement).dataset.pubkey === event.pubkey) {
-                const nameEl: Element | null = el.querySelector(".event-username");
-                const avatarEl: Element | null = el.querySelector(".event-avatar");
+                const nameEl: Element | null =
+                  el.querySelector('.event-username');
+                const avatarEl: Element | null =
+                  el.querySelector('.event-avatar');
                 if (fetchedProfile) {
                   if (nameEl) {
                     const npubStr: Npub = nip19.npubEncode(event.pubkey);
                     nameEl.textContent = `👤 ${getDisplayName(npubStr, fetchedProfile)}`;
                   }
                   if (avatarEl) {
-                    (avatarEl as HTMLImageElement).src = getAvatarURL(event.pubkey, fetchedProfile);
+                    (avatarEl as HTMLImageElement).src = getAvatarURL(
+                      event.pubkey,
+                      fetchedProfile,
+                    );
                   }
                 }
               }
@@ -193,7 +217,7 @@ export async function loadHomeTimeline(
     });
 
     if (connectingMsg && renderedEventIds.size > 0) {
-      connectingMsg.style.display = "none";
+      connectingMsg.style.display = 'none';
     }
   };
 
@@ -210,7 +234,7 @@ export async function loadHomeTimeline(
     // === PHASE 2: Store fetched events to cache ===
     if (bufferedEvents.length > 0 && userPubkey) {
       storeEvents(bufferedEvents, { isHomeTimeline: true }).catch((error) => {
-        console.error("[HomeTimeline] Failed to store events:", error);
+        console.error('[HomeTimeline] Failed to store events:', error);
       });
 
       // Update timeline index
@@ -221,13 +245,23 @@ export async function loadHomeTimeline(
 
       if (isInitialLoad) {
         // Initial load: prepend new events
-        prependEventsToTimeline("home", userPubkey, eventIds, newestTimestamp).catch((error) => {
-          console.error("[HomeTimeline] Failed to update timeline:", error);
+        prependEventsToTimeline(
+          'home',
+          userPubkey,
+          eventIds,
+          newestTimestamp,
+        ).catch((error) => {
+          console.error('[HomeTimeline] Failed to update timeline:', error);
         });
       } else {
         // Pagination: append older events
-        appendEventsToTimeline("home", userPubkey, eventIds, oldestTimestamp).catch((error) => {
-          console.error("[HomeTimeline] Failed to append to timeline:", error);
+        appendEventsToTimeline(
+          'home',
+          userPubkey,
+          eventIds,
+          oldestTimestamp,
+        ).catch((error) => {
+          console.error('[HomeTimeline] Failed to append to timeline:', error);
         });
       }
     }
@@ -235,7 +269,9 @@ export async function loadHomeTimeline(
 
     if (renderedEventIds.size === 0 && seenEventIds.size === 0) {
       if (!routeIsActive()) return; // Guard before DOM update
-      console.warn(`[HomeTimeline] No events found. Authors: ${followedPubkeys.length}, Kinds: ${kinds.join(', ')}, Relays: ${relays.length}`);
+      console.warn(
+        `[HomeTimeline] No events found. Authors: ${followedPubkeys.length}, Kinds: ${kinds.join(', ')}, Relays: ${relays.length}`,
+      );
       output.innerHTML = `
         <div class="text-center py-8">
           <p class="text-gray-700 mb-4">No posts found in your home timeline.</p>
@@ -252,14 +288,14 @@ export async function loadHomeTimeline(
 
     if (loadMoreBtn) {
       (loadMoreBtn as HTMLButtonElement).disabled = false;
-      loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+      loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       if (renderedEventIds.size > 0) {
-        loadMoreBtn.style.display = "inline";
+        loadMoreBtn.style.display = 'inline';
       }
     }
 
     if (connectingMsg) {
-      connectingMsg.style.display = "none";
+      connectingMsg.style.display = 'none';
     }
   };
 
@@ -276,7 +312,7 @@ export async function loadHomeTimeline(
   // Safety timeout to ensure loading completes even if relays don't respond
   const safetyTimeoutId = window.setTimeout((): void => {
     if (!finalized) {
-      console.warn("Timeline loading timed out, forcing finalization");
+      console.warn('Timeline loading timed out, forcing finalization');
       finalizeLoading();
     }
   }, 8000);
@@ -309,12 +345,14 @@ export async function loadHomeTimeline(
       }
 
       const event: NostrEvent = packet.event;
-      console.log(`[HomeTimeline] Received event ${event.id} from ${packet.from} (kind ${event.kind})`);
+      console.log(
+        `[HomeTimeline] Received event ${event.id} from ${packet.from} (kind ${event.kind})`,
+      );
       if (seenEventIds.has(event.id)) return;
       seenEventIds.add(event.id);
 
       if (connectingMsg) {
-        connectingMsg.style.display = "none";
+        connectingMsg.style.display = 'none';
       }
 
       bufferedEvents.push(event);
@@ -324,11 +362,11 @@ export async function loadHomeTimeline(
       if (!routeIsActive()) return;
       console.error('[HomeTimeline] Subscription error:', err);
       if (connectingMsg) {
-        connectingMsg.style.display = "none";
+        connectingMsg.style.display = 'none';
       }
       if (loadMoreBtn) {
         (loadMoreBtn as HTMLButtonElement).disabled = false;
-        loadMoreBtn.classList.remove("opacity-50", "cursor-not-allowed");
+        loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       }
       // Force finalization on error
       if (!finalized) {
@@ -336,11 +374,13 @@ export async function loadHomeTimeline(
       }
     },
     complete: () => {
-      console.log(`[HomeTimeline] Subscription complete. Received ${bufferedEvents.length} events.`);
+      console.log(
+        `[HomeTimeline] Subscription complete. Received ${bufferedEvents.length} events.`,
+      );
       if (!finalized) {
         finalizeLoading();
       }
-    }
+    },
   });
 
   // Emit filter AFTER subscribe — rx-nostr uses a regular Subject, not ReplaySubject,
@@ -349,23 +389,27 @@ export async function loadHomeTimeline(
 
   if (loadMoreBtn) {
     // Remove old listeners and add new one
-    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(true) as HTMLElement;
+    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
+      true,
+    ) as HTMLElement;
     loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
-    newLoadMoreBtn.addEventListener("click", (): Promise<void> =>
-      loadHomeTimeline(
-        followedPubkeys,
-        kinds,
-        [],
-        limit,
-        untilTimestamp,
-        seenEventIds,
-        output,
-        connectingMsg,
-        [],
-        activeTimeouts,
-        routeIsActive,
-        userPubkey,
-      ),
+    newLoadMoreBtn.addEventListener(
+      'click',
+      (): Promise<void> =>
+        loadHomeTimeline(
+          followedPubkeys,
+          kinds,
+          [],
+          limit,
+          untilTimestamp,
+          seenEventIds,
+          output,
+          connectingMsg,
+          [],
+          activeTimeouts,
+          routeIsActive,
+          userPubkey,
+        ),
     );
   }
 }

@@ -1,7 +1,7 @@
-import type { NostrEvent, PubkeyHex } from "../../../types/nostr.js";
-import { getTimeline } from "./timelines-store.js";
-import { getEvents } from "./events-store.js";
-import type { TimelineType } from "./types.js";
+import type { NostrEvent, PubkeyHex } from '../../../types/nostr.js';
+import { getEvents } from './events-store.js';
+import { getTimeline } from './timelines-store.js';
+import type { TimelineType } from './types.js';
 
 /**
  * Result from loading a cached timeline
@@ -19,10 +19,12 @@ export interface CachedTimelineResult {
 export async function getCachedTimeline(
   type: TimelineType,
   pubkey?: PubkeyHex | undefined,
-  options?: {
-    limit?: number | undefined;
-    offset?: number | undefined;
-  } | undefined
+  options?:
+    | {
+        limit?: number | undefined;
+        offset?: number | undefined;
+      }
+    | undefined,
 ): Promise<CachedTimelineResult> {
   const timeline = await getTimeline(type, pubkey);
 
@@ -62,7 +64,7 @@ export async function getCachedTimeline(
  */
 export async function getTimelineNewestTimestamp(
   type: TimelineType,
-  pubkey?: PubkeyHex
+  pubkey?: PubkeyHex,
 ): Promise<number> {
   const timeline = await getTimeline(type, pubkey);
   return timeline?.newestTimestamp ?? 0;
@@ -73,7 +75,7 @@ export async function getTimelineNewestTimestamp(
  */
 export async function getTimelineOldestTimestamp(
   type: TimelineType,
-  pubkey?: PubkeyHex
+  pubkey?: PubkeyHex,
 ): Promise<number> {
   const timeline = await getTimeline(type, pubkey);
   return timeline?.oldestTimestamp ?? Date.now();
@@ -84,7 +86,7 @@ export async function getTimelineOldestTimestamp(
  */
 export async function hasTimelineCache(
   type: TimelineType,
-  pubkey?: PubkeyHex
+  pubkey?: PubkeyHex,
 ): Promise<boolean> {
   const timeline = await getTimeline(type, pubkey);
   return timeline !== null && timeline.eventIds.length > 0;
@@ -95,7 +97,7 @@ export async function hasTimelineCache(
  */
 export async function getTimelineCacheSize(
   type: TimelineType,
-  pubkey?: PubkeyHex
+  pubkey?: PubkeyHex,
 ): Promise<number> {
   const timeline = await getTimeline(type, pubkey);
   return timeline?.eventIds.length ?? 0;

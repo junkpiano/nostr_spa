@@ -1,23 +1,23 @@
-import type { NostrProfile, PubkeyHex } from "../../../types/nostr.js";
+import type { NostrProfile, PubkeyHex } from '../../../types/nostr.js';
 import {
   createTransaction,
+  isIndexedDBAvailable,
   requestToPromise,
   transactionToPromise,
-  isIndexedDBAvailable,
-} from "./indexeddb.js";
-import { STORE_NAMES, LIMITS, TTL, type CachedProfile } from "./types.js";
+} from './indexeddb.js';
+import { type CachedProfile, LIMITS, STORE_NAMES, TTL } from './types.js';
 
 /**
  * Stores a single profile in the cache
  */
 export async function storeProfile(
   pubkey: PubkeyHex,
-  profile: NostrProfile
+  profile: NostrProfile,
 ): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
     const now = Date.now();
 
@@ -31,7 +31,7 @@ export async function storeProfile(
     store.put(cachedProfile);
     await transactionToPromise(tx);
   } catch (error) {
-    console.error("[ProfilesStore] Failed to store profile:", error);
+    console.error('[ProfilesStore] Failed to store profile:', error);
   }
 }
 
@@ -39,12 +39,12 @@ export async function storeProfile(
  * Stores multiple profiles in a batch
  */
 export async function storeProfiles(
-  profiles: Array<{ pubkey: PubkeyHex; profile: NostrProfile }>
+  profiles: Array<{ pubkey: PubkeyHex; profile: NostrProfile }>,
 ): Promise<void> {
   if (!isIndexedDBAvailable() || profiles.length === 0) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
     const now = Date.now();
 
@@ -61,7 +61,7 @@ export async function storeProfiles(
     await transactionToPromise(tx);
     console.log(`[ProfilesStore] Stored ${profiles.length} profiles`);
   } catch (error) {
-    console.error("[ProfilesStore] Failed to store profiles:", error);
+    console.error('[ProfilesStore] Failed to store profiles:', error);
   }
 }
 
@@ -69,16 +69,16 @@ export async function storeProfiles(
  * Retrieves a single profile by pubkey
  */
 export async function getProfile(
-  pubkey: PubkeyHex
+  pubkey: PubkeyHex,
 ): Promise<NostrProfile | null> {
   if (!isIndexedDBAvailable()) return null;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
 
     const record = await requestToPromise<CachedProfile | undefined>(
-      store.get(pubkey)
+      store.get(pubkey),
     );
 
     if (!record) return null;
@@ -97,7 +97,7 @@ export async function getProfile(
 
     return record.profile;
   } catch (error) {
-    console.error("[ProfilesStore] Failed to get profile:", error);
+    console.error('[ProfilesStore] Failed to get profile:', error);
     return null;
   }
 }
@@ -106,19 +106,19 @@ export async function getProfile(
  * Retrieves multiple profiles by pubkeys
  */
 export async function getProfiles(
-  pubkeys: PubkeyHex[]
+  pubkeys: PubkeyHex[],
 ): Promise<Map<PubkeyHex, NostrProfile>> {
   if (!isIndexedDBAvailable() || pubkeys.length === 0) return new Map();
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
     const now = Date.now();
     const profiles = new Map<PubkeyHex, NostrProfile>();
 
     for (const pubkey of pubkeys) {
       const record = await requestToPromise<CachedProfile | undefined>(
-        store.get(pubkey)
+        store.get(pubkey),
       );
 
       if (!record) continue;
@@ -138,7 +138,7 @@ export async function getProfiles(
 
     return profiles;
   } catch (error) {
-    console.error("[ProfilesStore] Failed to get profiles:", error);
+    console.error('[ProfilesStore] Failed to get profiles:', error);
     return new Map();
   }
 }
@@ -146,17 +146,15 @@ export async function getProfiles(
 /**
  * Checks if a profile needs refresh (older than 24 hours)
  */
-export async function profileNeedsRefresh(
-  pubkey: PubkeyHex
-): Promise<boolean> {
+export async function profileNeedsRefresh(pubkey: PubkeyHex): Promise<boolean> {
   if (!isIndexedDBAvailable()) return true;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readonly");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readonly');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
 
     const record = await requestToPromise<CachedProfile | undefined>(
-      store.get(pubkey)
+      store.get(pubkey),
     );
 
     if (!record) return true;
@@ -164,7 +162,7 @@ export async function profileNeedsRefresh(
     const now = Date.now();
     return now - record.storedAt > TTL.PROFILE_REFRESH;
   } catch (error) {
-    console.error("[ProfilesStore] Failed to check profile refresh:", error);
+    console.error('[ProfilesStore] Failed to check profile refresh:', error);
     return true;
   }
 }
@@ -176,11 +174,11 @@ export async function countProfiles(): Promise<number> {
   if (!isIndexedDBAvailable()) return 0;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readonly");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readonly');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
     return await requestToPromise<number>(store.count());
   } catch (error) {
-    console.error("[ProfilesStore] Failed to count profiles:", error);
+    console.error('[ProfilesStore] Failed to count profiles:', error);
     return 0;
   }
 }
@@ -197,9 +195,9 @@ export async function pruneProfiles(): Promise<number> {
       return 0; // No pruning needed
     }
 
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
-    const index = store.index("accessedAt");
+    const index = store.index('accessedAt');
 
     const toDelete = count - LIMITS.PROFILES;
     let deleted = 0;
@@ -223,7 +221,7 @@ export async function pruneProfiles(): Promise<number> {
       cursorRequest.onerror = (): void => reject(cursorRequest.error);
     });
   } catch (error) {
-    console.error("[ProfilesStore] Failed to prune profiles:", error);
+    console.error('[ProfilesStore] Failed to prune profiles:', error);
     return 0;
   }
 }
@@ -235,12 +233,12 @@ export async function clearProfiles(): Promise<void> {
   if (!isIndexedDBAvailable()) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
     await requestToPromise(store.clear());
-    console.log("[ProfilesStore] Cleared all profiles");
+    console.log('[ProfilesStore] Cleared all profiles');
   } catch (error) {
-    console.error("[ProfilesStore] Failed to clear profiles:", error);
+    console.error('[ProfilesStore] Failed to clear profiles:', error);
   }
 }
 
@@ -251,7 +249,7 @@ export async function deleteProfiles(pubkeys: PubkeyHex[]): Promise<void> {
   if (!isIndexedDBAvailable() || pubkeys.length === 0) return;
 
   try {
-    const tx = await createTransaction(STORE_NAMES.PROFILES, "readwrite");
+    const tx = await createTransaction(STORE_NAMES.PROFILES, 'readwrite');
     const store = tx.objectStore(STORE_NAMES.PROFILES);
 
     for (const pubkey of pubkeys) {
@@ -261,6 +259,6 @@ export async function deleteProfiles(pubkeys: PubkeyHex[]): Promise<void> {
     await transactionToPromise(tx);
     console.log(`[ProfilesStore] Deleted ${pubkeys.length} profiles`);
   } catch (error) {
-    console.error("[ProfilesStore] Failed to delete profiles:", error);
+    console.error('[ProfilesStore] Failed to delete profiles:', error);
   }
 }
