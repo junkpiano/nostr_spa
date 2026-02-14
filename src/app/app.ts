@@ -59,6 +59,12 @@ let untilTimestamp: number = Math.floor(Date.now() / 1000);
 let profile: NostrProfile | null = null;
 const homeKinds: number[] = [1, 2, 6, 9, 11, 16, 22, 28, 40, 70, 77];
 
+type AppHistoryState = {
+  __nostrSpa?: true;
+  scrollX?: number;
+  scrollY?: number;
+};
+
 // Cache for home timeline
 let cachedHomeTimeline: {
   events: any[];
@@ -113,6 +119,67 @@ function createRouteGuard(): () => boolean {
   return (): boolean => token === activeRouteToken;
 }
 
+function getCurrentHistoryStateObject(): Record<string, unknown> {
+  const state: unknown = window.history.state;
+  if (state && typeof state === 'object') {
+    return state as Record<string, unknown>;
+  }
+  return {};
+}
+
+function saveScrollToHistoryState(): void {
+  const base: Record<string, unknown> = getCurrentHistoryStateObject();
+  const nextState: AppHistoryState & Record<string, unknown> = {
+    ...base,
+    __nostrSpa: true,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+  };
+  const url: string =
+    window.location.pathname + window.location.search + window.location.hash;
+  window.history.replaceState(nextState, '', url);
+}
+
+function pushAppHistoryPath(path: string): void {
+  const nextState: AppHistoryState = {
+    __nostrSpa: true,
+    scrollX: 0,
+    scrollY: 0,
+  };
+  window.history.pushState(nextState, '', path);
+}
+
+function replaceAppHistoryPath(path: string): void {
+  const nextState: AppHistoryState = {
+    __nostrSpa: true,
+    scrollX: 0,
+    scrollY: 0,
+  };
+  window.history.replaceState(nextState, '', path);
+}
+
+async function restoreScrollFromState(state: unknown): Promise<void> {
+  const s: any = state;
+  const x: number = typeof s?.scrollX === 'number' ? s.scrollX : 0;
+  const y: number = typeof s?.scrollY === 'number' ? s.scrollY : 0;
+
+  // Timeline rendering is async; give layout a couple of frames, then try a few times.
+  for (let i: number = 0; i < 10; i += 1) {
+    await new Promise<void>((resolve: () => void): void => {
+      window.requestAnimationFrame((): void => {
+        window.requestAnimationFrame((): void => resolve());
+      });
+    });
+    window.scrollTo(x, y);
+    if (Math.abs(window.scrollY - y) <= 2) {
+      return;
+    }
+    await new Promise<void>((resolve: () => void): void => {
+      window.setTimeout(resolve, 60);
+    });
+  }
+}
+
 function syncRelays(): void {
   relays = getRelays();
 }
@@ -155,6 +222,28 @@ function showNewEventsNotification(_timelineType: string, count: number): void {
   }, 10000);
 }
 document.addEventListener('DOMContentLoaded', (): void => {
+  if ('scrollRestoration' in window.history) {
+    window.history.scrollRestoration = 'manual';
+  }
+
+  // Ensure the initial history entry has state we can mutate as the user scrolls.
+  saveScrollToHistoryState();
+
+  let scrollSyncTimer: number | null = null;
+  window.addEventListener(
+    'scroll',
+    (): void => {
+      if (scrollSyncTimer !== null) {
+        return;
+      }
+      scrollSyncTimer = window.setTimeout((): void => {
+        scrollSyncTimer = null;
+        saveScrollToHistoryState();
+      }, 150);
+    },
+    { passive: true },
+  );
+
   window.addEventListener('relays-updated', syncRelays);
   if (connectingMsg) {
     connectingMsg.style.display = 'none'; // Hide connecting message by default
@@ -187,7 +276,11 @@ document.addEventListener('DOMContentLoaded', (): void => {
 
   // Setup navigation
   setupNavigation({
-    handleRoute,
+    navigateTo: (path: string): void => {
+      saveScrollToHistoryState();
+      pushAppHistoryPath(path);
+      handleRoute();
+    },
     onLogout: handleLogout,
   });
 
@@ -260,7 +353,8 @@ document.addEventListener('DOMContentLoaded', (): void => {
     }
 
     event.preventDefault();
-    window.history.pushState(null, '', url.pathname);
+    saveScrollToHistoryState();
+    pushAppHistoryPath(url.pathname);
     handleRoute();
   });
 
@@ -276,12 +370,12 @@ window.addEventListener('beforeunload', (): void => {
 });
 
 // Handle browser back/forward buttons
-window.addEventListener('popstate', (): void => {
-  handleRoute();
+window.addEventListener('popstate', (event: PopStateEvent): void => {
+  handleRoute(event.state);
 });
 
 // Router function
-function handleRoute(): void {
+function handleRoute(scrollRestoreState?: unknown): void {
   const isRouteActive: () => boolean = createRouteGuard();
   const path: string = window.location.pathname;
   updateLogoutButton(composeButton);
@@ -292,191 +386,16 @@ function handleRoute(): void {
     notificationsButton.style.display = storedPubkey ? '' : 'none';
   }
 
-  if (path === '/' || path === '') {
-    // Redirect to /home
-    window.history.replaceState(null, '', '/home');
-    loadHomePage(isRouteActive);
-  } else if (path === '/home') {
-    loadHomePage(isRouteActive);
-  } else if (path === '/global') {
-    loadGlobalPage(isRouteActive);
-  } else if (path === '/notifications') {
-    const homeButton: HTMLElement | null = document.getElementById('nav-home');
-    const globalButton: HTMLElement | null =
-      document.getElementById('nav-global');
-    const relaysButton: HTMLElement | null =
-      document.getElementById('nav-relays');
-    const notificationsButton: HTMLElement | null =
-      document.getElementById('nav-notifications');
-    const profileLink: HTMLElement | null =
-      document.getElementById('nav-profile');
-    const settingsButton: HTMLElement | null =
-      document.getElementById('nav-settings');
-    setActiveNav(
-      homeButton,
-      globalButton,
-      relaysButton,
-      profileLink,
-      settingsButton,
-      null,
-    );
-    if (notificationsButton) {
-      notificationsButton.classList.remove('text-gray-700');
-      notificationsButton.classList.add('bg-indigo-100', 'text-indigo-700');
-    }
-    loadNotificationsPage({ relays, limit: 50, isRouteActive });
-  } else if (path === '/relays') {
-    loadRelaysPage({
-      closeAllWebSockets,
-      stopBackgroundFetch: (): void => {
-        if (backgroundFetchInterval) {
-          clearInterval(backgroundFetchInterval);
-          backgroundFetchInterval = null;
-        }
-      },
-      clearNotification: (): void => {
-        const notification = document.getElementById('new-posts-notification');
-        if (notification) {
-          notification.remove();
-        }
-      },
-      setActiveNav,
-      getRelays: (): string[] => getAllRelays(),
-      setRelays: (list: string[]): void => {
-        setRelays(list);
-        syncRelays();
-      },
-      normalizeRelayUrl,
-      onRelaysChanged: syncRelays,
-      onBroadcastRequested: async (): Promise<void> => {
-        const statusEl: HTMLElement | null =
-          document.getElementById('broadcast-status');
-        const setStatus = (
-          message: string,
-          type: 'info' | 'error' | 'success' = 'info',
-        ): void => {
-          if (!statusEl) return;
-          statusEl.textContent = message;
-          if (type === 'error') {
-            statusEl.className = 'text-xs text-red-600';
-          } else if (type === 'success') {
-            statusEl.className = 'text-xs text-emerald-700';
-          } else {
-            statusEl.className = 'text-xs text-gray-600';
-          }
-        };
-
-        try {
-          setStatus('Preparing broadcast...');
-          const result = await broadcastRecentPosts({
-            relays: getAllRelays(),
-            limit: 50,
-            onProgress: ({ total, completed }): void => {
-              setStatus(`Broadcasting ${completed}/${total} posts...`);
-            },
-          });
-          setStatus(
-            `Broadcasted ${result.completed} posts to ${result.relays} relays.`,
-            'success',
-          );
-
-          const storedPubkey: string | null =
-            localStorage.getItem('nostr_pubkey');
-          if (storedPubkey) {
-            await deleteTimeline('home', storedPubkey as PubkeyHex);
-          }
-          cachedHomeTimeline = null;
-        } catch (error: unknown) {
-          const message: string =
-            error instanceof Error ? error.message : 'Broadcast failed.';
-          setStatus(message, 'error');
-        }
-      },
-      profileSection,
-      output,
-    });
-  } else if (path === '/settings') {
-    loadSettingsPage({
-      closeAllWebSockets,
-      stopBackgroundFetch: (): void => {
-        if (backgroundFetchInterval) {
-          clearInterval(backgroundFetchInterval);
-          backgroundFetchInterval = null;
-        }
-      },
-      clearNotification: (): void => {
-        const notification = document.getElementById('new-posts-notification');
-        if (notification) {
-          notification.remove();
-        }
-      },
-      setActiveNav,
-      profileSection,
-      output,
-    });
-  } else if (path === '/about') {
-    const notificationsButton: HTMLElement | null =
-      document.getElementById('nav-notifications');
-    if (notificationsButton) {
-      notificationsButton.classList.remove('bg-indigo-100', 'text-indigo-700');
-      notificationsButton.classList.add('text-gray-700');
-    }
-    loadAboutPage({
-      closeAllWebSockets,
-      stopBackgroundFetch: (): void => {
-        if (backgroundFetchInterval) {
-          clearInterval(backgroundFetchInterval);
-          backgroundFetchInterval = null;
-        }
-      },
-      clearNotification: (): void => {
-        const notification = document.getElementById('new-posts-notification');
-        if (notification) {
-          notification.remove();
-        }
-      },
-      setActiveNav,
-      profileSection,
-      output,
-    });
-  } else {
-    // Try to parse as npub profile
-    const npub: string = path.replace('/', '').trim();
-    if (npub.startsWith('nevent') || npub.startsWith('note')) {
-      loadEventPage({
-        eventRef: npub,
-        relays,
-        output,
-        profileSection,
-        closeAllWebSockets,
-        stopBackgroundFetch: (): void => {
-          if (backgroundFetchInterval) {
-            clearInterval(backgroundFetchInterval);
-            backgroundFetchInterval = null;
-          }
-        },
-        clearNotification: (): void => {
-          const notification = document.getElementById(
-            'new-posts-notification',
-          );
-          if (notification) {
-            notification.remove();
-          }
-        },
-        isRouteActive,
-      });
-    } else if (isNip05Identifier(npub)) {
-      // NIP-05 identifier (e.g., user@domain.com)
-      closeAllWebSockets();
-      if (backgroundFetchInterval) {
-        clearInterval(backgroundFetchInterval);
-        backgroundFetchInterval = null;
-      }
-      const notification = document.getElementById('new-posts-notification');
-      if (notification) {
-        notification.remove();
-      }
-
+  void (async (): Promise<void> => {
+    if (path === '/' || path === '') {
+      // Redirect to /home
+      replaceAppHistoryPath('/home');
+      await loadHomePage(isRouteActive);
+    } else if (path === '/home') {
+      await loadHomePage(isRouteActive);
+    } else if (path === '/global') {
+      await loadGlobalPage(isRouteActive);
+    } else if (path === '/notifications') {
       const homeButton: HTMLElement | null =
         document.getElementById('nav-home');
       const globalButton: HTMLElement | null =
@@ -495,8 +414,115 @@ function handleRoute(): void {
         relaysButton,
         profileLink,
         settingsButton,
-        profileLink,
+        null,
       );
+      if (notificationsButton) {
+        notificationsButton.classList.remove('text-gray-700');
+        notificationsButton.classList.add('bg-indigo-100', 'text-indigo-700');
+      }
+      await Promise.resolve(
+        loadNotificationsPage({ relays, limit: 50, isRouteActive }),
+      );
+    } else if (path === '/relays') {
+      await Promise.resolve(
+        loadRelaysPage({
+          closeAllWebSockets,
+          stopBackgroundFetch: (): void => {
+            if (backgroundFetchInterval) {
+              clearInterval(backgroundFetchInterval);
+              backgroundFetchInterval = null;
+            }
+          },
+          clearNotification: (): void => {
+            const notification = document.getElementById(
+              'new-posts-notification',
+            );
+            if (notification) {
+              notification.remove();
+            }
+          },
+          setActiveNav,
+          getRelays: (): string[] => getAllRelays(),
+          setRelays: (list: string[]): void => {
+            setRelays(list);
+            syncRelays();
+          },
+          normalizeRelayUrl,
+          onRelaysChanged: syncRelays,
+          onBroadcastRequested: async (): Promise<void> => {
+            const statusEl: HTMLElement | null =
+              document.getElementById('broadcast-status');
+            const setStatus = (
+              message: string,
+              type: 'info' | 'error' | 'success' = 'info',
+            ): void => {
+              if (!statusEl) return;
+              statusEl.textContent = message;
+              if (type === 'error') {
+                statusEl.className = 'text-xs text-red-600';
+              } else if (type === 'success') {
+                statusEl.className = 'text-xs text-emerald-700';
+              } else {
+                statusEl.className = 'text-xs text-gray-600';
+              }
+            };
+
+            try {
+              setStatus('Preparing broadcast...');
+              const result = await broadcastRecentPosts({
+                relays: getAllRelays(),
+                limit: 50,
+                onProgress: ({ total, completed }): void => {
+                  setStatus(`Broadcasting ${completed}/${total} posts...`);
+                },
+              });
+              setStatus(
+                `Broadcasted ${result.completed} posts to ${result.relays} relays.`,
+                'success',
+              );
+
+              const storedPubkey: string | null =
+                localStorage.getItem('nostr_pubkey');
+              if (storedPubkey) {
+                await deleteTimeline('home', storedPubkey as PubkeyHex);
+              }
+              cachedHomeTimeline = null;
+            } catch (error: unknown) {
+              const message: string =
+                error instanceof Error ? error.message : 'Broadcast failed.';
+              setStatus(message, 'error');
+            }
+          },
+          profileSection,
+          output,
+        }),
+      );
+    } else if (path === '/settings') {
+      await Promise.resolve(
+        loadSettingsPage({
+          closeAllWebSockets,
+          stopBackgroundFetch: (): void => {
+            if (backgroundFetchInterval) {
+              clearInterval(backgroundFetchInterval);
+              backgroundFetchInterval = null;
+            }
+          },
+          clearNotification: (): void => {
+            const notification = document.getElementById(
+              'new-posts-notification',
+            );
+            if (notification) {
+              notification.remove();
+            }
+          },
+          setActiveNav,
+          profileSection,
+          output,
+        }),
+      );
+    } else if (path === '/about') {
+      const notificationsButton: HTMLElement | null =
+        document.getElementById('nav-notifications');
       if (notificationsButton) {
         notificationsButton.classList.remove(
           'bg-indigo-100',
@@ -504,77 +530,171 @@ function handleRoute(): void {
         );
         notificationsButton.classList.add('text-gray-700');
       }
+      await Promise.resolve(
+        loadAboutPage({
+          closeAllWebSockets,
+          stopBackgroundFetch: (): void => {
+            if (backgroundFetchInterval) {
+              clearInterval(backgroundFetchInterval);
+              backgroundFetchInterval = null;
+            }
+          },
+          clearNotification: (): void => {
+            const notification = document.getElementById(
+              'new-posts-notification',
+            );
+            if (notification) {
+              notification.remove();
+            }
+          },
+          setActiveNav,
+          profileSection,
+          output,
+        }),
+      );
+    } else {
+      // Try to parse as npub profile
+      const npub: string = path.replace('/', '').trim();
+      if (npub.startsWith('nevent') || npub.startsWith('note')) {
+        await Promise.resolve(
+          loadEventPage({
+            eventRef: npub,
+            relays,
+            output,
+            profileSection,
+            closeAllWebSockets,
+            stopBackgroundFetch: (): void => {
+              if (backgroundFetchInterval) {
+                clearInterval(backgroundFetchInterval);
+                backgroundFetchInterval = null;
+              }
+            },
+            clearNotification: (): void => {
+              const notification = document.getElementById(
+                'new-posts-notification',
+              );
+              if (notification) {
+                notification.remove();
+              }
+            },
+            isRouteActive,
+          }),
+        );
+      } else if (isNip05Identifier(npub)) {
+        // NIP-05 identifier (e.g., user@domain.com)
+        closeAllWebSockets();
+        if (backgroundFetchInterval) {
+          clearInterval(backgroundFetchInterval);
+          backgroundFetchInterval = null;
+        }
+        const notification = document.getElementById('new-posts-notification');
+        if (notification) {
+          notification.remove();
+        }
 
-      renderLoadingState('Resolving NIP-05 identifier...', npub);
+        const homeButton: HTMLElement | null =
+          document.getElementById('nav-home');
+        const globalButton: HTMLElement | null =
+          document.getElementById('nav-global');
+        const relaysButton: HTMLElement | null =
+          document.getElementById('nav-relays');
+        const notificationsButton: HTMLElement | null =
+          document.getElementById('nav-notifications');
+        const profileLink: HTMLElement | null =
+          document.getElementById('nav-profile');
+        const settingsButton: HTMLElement | null =
+          document.getElementById('nav-settings');
+        setActiveNav(
+          homeButton,
+          globalButton,
+          relaysButton,
+          profileLink,
+          settingsButton,
+          profileLink,
+        );
+        if (notificationsButton) {
+          notificationsButton.classList.remove(
+            'bg-indigo-100',
+            'text-indigo-700',
+          );
+          notificationsButton.classList.add('text-gray-700');
+        }
 
-      resolveNip05(npub).then((pubkeyHex: PubkeyHex | null): void => {
+        renderLoadingState('Resolving NIP-05 identifier...', npub);
+
+        const pubkeyHex: PubkeyHex | null = await resolveNip05(npub);
         if (!isRouteActive()) return;
         if (pubkeyHex) {
           const resolvedNpub: string = nip19.npubEncode(pubkeyHex);
-          startApp(resolvedNpub as Npub, isRouteActive);
-        } else {
-          if (output) {
-            output.innerHTML = `
-              <div class="text-center py-8">
-                <p class="text-red-600 mb-4">Could not resolve NIP-05 identifier.</p>
-                <p class="text-gray-600 text-sm">"${npub}" could not be found. Check the identifier and try again.</p>
-              </div>
-            `;
-          }
+          await startApp(resolvedNpub as Npub, isRouteActive);
+        } else if (output) {
+          output.innerHTML = `
+          <div class="text-center py-8">
+            <p class="text-red-600 mb-4">Could not resolve NIP-05 identifier.</p>
+            <p class="text-gray-600 text-sm">"${npub}" could not be found. Check the identifier and try again.</p>
+          </div>
+        `;
         }
-      });
-    } else if (npub.startsWith('npub')) {
-      // Close any active WebSocket connections from previous timeline
-      // Note: Potential race condition if navigation happens quickly, but mitigated by
-      // isRouteActive() guards that prevent new subscriptions from continuing after route change
-      closeAllWebSockets();
+      } else if (npub.startsWith('npub')) {
+        // Close any active WebSocket connections from previous timeline
+        // Note: Potential race condition if navigation happens quickly, but mitigated by
+        // isRouteActive() guards that prevent new subscriptions from continuing after route change
+        closeAllWebSockets();
 
-      // Stop background fetching when switching away from home timeline
-      if (backgroundFetchInterval) {
-        clearInterval(backgroundFetchInterval);
-        backgroundFetchInterval = null;
-      }
+        // Stop background fetching when switching away from home timeline
+        if (backgroundFetchInterval) {
+          clearInterval(backgroundFetchInterval);
+          backgroundFetchInterval = null;
+        }
 
-      // Remove new posts notification if exists
-      const notification = document.getElementById('new-posts-notification');
-      if (notification) {
-        notification.remove();
-      }
+        // Remove new posts notification if exists
+        const notification = document.getElementById('new-posts-notification');
+        if (notification) {
+          notification.remove();
+        }
 
-      const homeButton: HTMLElement | null =
-        document.getElementById('nav-home');
-      const globalButton: HTMLElement | null =
-        document.getElementById('nav-global');
-      const relaysButton: HTMLElement | null =
-        document.getElementById('nav-relays');
-      const notificationsButton: HTMLElement | null =
-        document.getElementById('nav-notifications');
-      const profileLink: HTMLElement | null =
-        document.getElementById('nav-profile');
-      const settingsButton: HTMLElement | null =
-        document.getElementById('nav-settings');
-      setActiveNav(
-        homeButton,
-        globalButton,
-        relaysButton,
-        profileLink,
-        settingsButton,
-        profileLink,
-      );
-      if (notificationsButton) {
-        notificationsButton.classList.remove(
-          'bg-indigo-100',
-          'text-indigo-700',
+        const homeButton: HTMLElement | null =
+          document.getElementById('nav-home');
+        const globalButton: HTMLElement | null =
+          document.getElementById('nav-global');
+        const relaysButton: HTMLElement | null =
+          document.getElementById('nav-relays');
+        const notificationsButton: HTMLElement | null =
+          document.getElementById('nav-notifications');
+        const profileLink: HTMLElement | null =
+          document.getElementById('nav-profile');
+        const settingsButton: HTMLElement | null =
+          document.getElementById('nav-settings');
+        setActiveNav(
+          homeButton,
+          globalButton,
+          relaysButton,
+          profileLink,
+          settingsButton,
+          profileLink,
         );
-        notificationsButton.classList.add('text-gray-700');
-      }
-      startApp(npub, isRouteActive);
-    } else {
-      if (output) {
-        output.innerHTML = "<p class='text-red-500'>Invalid URL format.</p>";
+        if (notificationsButton) {
+          notificationsButton.classList.remove(
+            'bg-indigo-100',
+            'text-indigo-700',
+          );
+          notificationsButton.classList.add('text-gray-700');
+        }
+        await startApp(npub, isRouteActive);
+      } else {
+        if (output) {
+          output.innerHTML = "<p class='text-red-500'>Invalid URL format.</p>";
+        }
       }
     }
-  }
+
+    if (!isRouteActive()) {
+      return;
+    }
+    if (scrollRestoreState !== undefined) {
+      await restoreScrollFromState(scrollRestoreState);
+    }
+  })();
 }
 
 // Load home page

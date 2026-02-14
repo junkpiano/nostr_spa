@@ -687,8 +687,11 @@ export function renderEvent(
   const isLoggedIn: boolean = Boolean(storedPubkey);
   const replyButtonHtml: string = isLoggedIn
     ? `
-          <button class="reply-event-btn text-blue-500 hover:text-blue-700 transition-colors p-1 rounded" aria-label="Reply to post" title="Reply" data-event-id="${escapeHtmlAttribute(event.id)}" data-event-pubkey="${escapeHtmlAttribute(event.pubkey)}" data-event-author="${safeName}">
-            💬 Reply
+          <button class="reply-event-btn text-blue-500 hover:text-blue-700 transition-colors p-1 rounded inline-flex items-center justify-center" aria-label="Reply to post" title="Reply" data-event-id="${escapeHtmlAttribute(event.id)}" data-event-pubkey="${escapeHtmlAttribute(event.pubkey)}" data-event-author="${safeName}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 10l-4 4 4 4" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M20 20v-2a8 8 0 00-8-8H5" />
+            </svg>
           </button>
         `
     : '';

@@ -1,5 +1,5 @@
 interface NavigationOptions {
-  handleRoute: () => void;
+  navigateTo: (path: string) => void;
   onLogout: () => void;
 }
 
@@ -146,8 +146,7 @@ export function setupNavigation(options: NavigationOptions): void {
     homeButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/home');
-        options.handleRoute();
+        options.navigateTo('/home');
       }),
     );
   }
@@ -156,8 +155,7 @@ export function setupNavigation(options: NavigationOptions): void {
     globalButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/global');
-        options.handleRoute();
+        options.navigateTo('/global');
       }),
     );
   }
@@ -166,8 +164,7 @@ export function setupNavigation(options: NavigationOptions): void {
     notificationsButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/notifications');
-        options.handleRoute();
+        options.navigateTo('/notifications');
       }),
     );
   }
@@ -176,8 +173,7 @@ export function setupNavigation(options: NavigationOptions): void {
     relaysButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/relays');
-        options.handleRoute();
+        options.navigateTo('/relays');
       }),
     );
   }
@@ -186,8 +182,7 @@ export function setupNavigation(options: NavigationOptions): void {
     settingsButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/settings');
-        options.handleRoute();
+        options.navigateTo('/settings');
       }),
     );
   }
@@ -196,8 +191,7 @@ export function setupNavigation(options: NavigationOptions): void {
     aboutButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/about');
-        options.handleRoute();
+        options.navigateTo('/about');
       }),
     );
   }
@@ -207,8 +201,7 @@ export function setupNavigation(options: NavigationOptions): void {
       'click',
       wrapNavigationHandler((): void => {
         options.onLogout();
-        window.history.pushState(null, '', '/home');
-        options.handleRoute();
+        options.navigateTo('/home');
       }),
     );
   }
