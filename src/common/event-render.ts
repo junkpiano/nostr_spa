@@ -10,11 +10,9 @@ import { fetchProfile } from '../features/profile/profile.js';
 import { getRelays } from '../features/relays/relays.js';
 import {
   fetchOGP,
-  fetchTwitterEmbed,
   getAvatarURL,
   getDisplayName,
   isTwitterURL,
-  loadTwitterWidgets,
   replaceEmojiShortcodes,
 } from '../utils/utils.js';
 import { getCachedEvent, setCachedEvent } from './event-cache.js';
@@ -59,6 +57,18 @@ function escapeHtmlAttribute(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/'/g, '&#39;');
+}
+
+function normalizeHttpUrl(url: string): string | null {
+  try {
+    const parsed: URL = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 }
 
 function getEmojiTagMap(tags: string[][]): Map<string, string> {
@@ -657,6 +667,8 @@ export function renderEvent(
     : null;
   const avatar: string = getAvatarURL(pubkey, profile);
   const name: string = getDisplayName(npub, profile);
+  const safeName: string = escapeHtmlAttribute(name);
+  const safeNpub: string = escapeHtmlAttribute(npub);
   const createdAt: string = new Date(event.created_at * 1000).toLocaleString();
   let eventPermalink: string | null = null;
   try {
@@ -675,7 +687,7 @@ export function renderEvent(
   const isLoggedIn: boolean = Boolean(storedPubkey);
   const replyButtonHtml: string = isLoggedIn
     ? `
-          <button class="reply-event-btn text-blue-500 hover:text-blue-700 transition-colors p-1 rounded" aria-label="Reply to post" title="Reply" data-event-id="${event.id}" data-event-pubkey="${event.pubkey}" data-event-author="${name}">
+          <button class="reply-event-btn text-blue-500 hover:text-blue-700 transition-colors p-1 rounded" aria-label="Reply to post" title="Reply" data-event-id="${escapeHtmlAttribute(event.id)}" data-event-pubkey="${escapeHtmlAttribute(event.pubkey)}" data-event-author="${safeName}">
             💬 Reply
           </button>
         `
@@ -689,6 +701,7 @@ export function renderEvent(
     : '';
 
   const contentSource: string = isRepost ? '' : event.content;
+  const escapedContentSource: string = escapeHtmlAttribute(contentSource);
   const urls: string[] = [];
   const imageUrls: string[] = [];
   const mentionedNpubs: string[] = Array.from(
@@ -744,7 +757,8 @@ export function renderEvent(
   const parentAuthorPubkey: PubkeyHex | null = parentEventId
     ? resolveParentAuthorPubkey(event)
     : null;
-  const contentWithUnicodeEmoji: string = replaceEmojiShortcodes(contentSource);
+  const contentWithUnicodeEmoji: string =
+    replaceEmojiShortcodes(escapedContentSource);
   const contentWithNostrLinks: string = contentWithUnicodeEmoji.replace(
     /(nostr:(?:nevent1|note1)[0-9a-z]+)/gi,
     (): string => '',
@@ -781,21 +795,26 @@ export function renderEvent(
   const contentWithLinks: string = contentWithMentions.replace(
     /(https?:\/\/[^\s]+)/g,
     (url: string): string => {
-      if (url.match(/\.(jpeg|jpg|gif|png|webp|svg|mp4|webm|mov|avi)$/i)) {
+      const safeUrl: string | null = normalizeHttpUrl(url);
+      if (!safeUrl) {
+        return url;
+      }
+
+      if (safeUrl.match(/\.(jpeg|jpg|gif|png|webp|svg|mp4|webm|mov|avi)$/i)) {
         const imageIndex: number = imageUrls.length;
-        imageUrls.push(url);
+        imageUrls.push(safeUrl);
 
         // In energy saving mode, show link instead of loading media
         if (isEnergySavingMode) {
-          const fileName = url.split('/').pop() || 'media';
-          return `<div class="my-2 p-2 bg-gray-100 rounded border border-gray-300"><span class="text-gray-600 text-xs">🖼️ Image: </span><a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline text-sm">${fileName}</a></div>`;
+          const fileName: string = safeUrl.split('/').pop() || 'media';
+          return `<div class="my-2 p-2 bg-gray-100 rounded border border-gray-300"><span class="text-gray-600 text-xs">🖼️ Image: </span><a href="${escapeHtmlAttribute(safeUrl)}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline text-sm">${escapeHtmlAttribute(fileName)}</a></div>`;
         }
 
-        return `<img src="${url}" alt="Image" class="my-2 max-w-full rounded shadow cursor-zoom-in event-image" loading="lazy" data-image-index="${imageIndex}" />`;
+        return `<img src="${escapeHtmlAttribute(safeUrl)}" alt="Image" class="my-2 max-w-full rounded shadow cursor-zoom-in event-image" loading="lazy" data-image-index="${imageIndex}" />`;
       }
 
-      urls.push(url);
-      return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">${url}</a>`;
+      urls.push(safeUrl);
+      return `<a href="${escapeHtmlAttribute(safeUrl)}" target="_blank" rel="noopener noreferrer" class="text-blue-500 underline">${escapeHtmlAttribute(safeUrl)}</a>`;
     },
   );
 
@@ -819,18 +838,20 @@ export function renderEvent(
     div.dataset.images = JSON.stringify(imageUrls);
   }
   // Avatar display based on energy saving mode
+  const safeAvatar: string =
+    normalizeHttpUrl(avatar) || 'https://placekitten.com/100/100';
   const avatarHtml: string = isEnergySavingMode
     ? `<div class="w-12 h-12 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-xl">👤</div>`
-    : `<img src="${avatar}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
+    : `<img src="${escapeHtmlAttribute(safeAvatar)}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
          onerror="this.src='https://placekitten.com/100/100';" />`;
 
   div.innerHTML = `
-		    <div class="flex items-start space-x-4">
-	      <a href="/${npub}" class="flex-shrink-0 hover:opacity-80 transition-opacity">
-	        ${avatarHtml}
-	      </a>
-		      <div class="flex-1 overflow-hidden">
-        <a href="/${npub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${name}</a>
+			    <div class="flex items-start space-x-4">
+		      <a href="/${safeNpub}" class="flex-shrink-0 hover:opacity-80 transition-opacity">
+		        ${avatarHtml}
+		      </a>
+			      <div class="flex-1 overflow-hidden">
+	        <a href="/${safeNpub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${safeName}</a>
         ${repostBadgeHtml}
             <div class="parent-event-container mb-2"></div>
 			        ${contentHtml}
@@ -911,11 +932,7 @@ export function renderEvent(
     if (ogpContainer) {
       urls.forEach(async (url: string): Promise<void> => {
         if (isTwitterURL(url)) {
-          const embedHTML: string | null = await fetchTwitterEmbed(url);
-          if (embedHTML) {
-            renderTwitterEmbed(embedHTML, ogpContainer);
-            loadTwitterWidgets();
-          }
+          renderTwitterEmbed(url, ogpContainer);
         } else {
           const ogpData: OGPResponse | null = await fetchOGP(url);
           if (ogpData?.data) {
@@ -1070,7 +1087,7 @@ async function renderParentEventCard(
       parentProfile,
     );
     const parentContentWithUnicodeEmoji: string = replaceEmojiShortcodes(
-      parentEvent.content,
+      escapeHtmlAttribute(parentEvent.content),
     );
     const parentContent: string = replaceCustomEmojiShortcodes(
       parentContentWithUnicodeEmoji,
@@ -1081,25 +1098,29 @@ async function renderParentEventCard(
         ? `${parentContent.slice(0, 220)}...`
         : parentContent;
     const parentPath: string = `/${nip19.neventEncode({ id: parentEvent.id })}`;
+    const safeParentPath: string = escapeHtmlAttribute(parentPath);
+    const safeParentName: string = escapeHtmlAttribute(parentName);
 
     const isEnergySavingMode: boolean =
       localStorage.getItem('energy_saving_mode') === 'true';
+    const safeParentAvatar: string =
+      normalizeHttpUrl(parentAvatar) || 'https://placekitten.com/80/80';
     const parentAvatarHtml: string = isEnergySavingMode
       ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
       : `<img
-          src="${parentAvatar}"
-          alt="${parentName}"
+          src="${escapeHtmlAttribute(safeParentAvatar)}"
+          alt="${safeParentName}"
           class="w-8 h-8 rounded-full object-cover flex-shrink-0"
           onerror="this.src='https://placekitten.com/80/80';"
         />`;
 
     card.innerHTML = `
-      <a href="${parentPath}" class="block hover:bg-amber-100 rounded transition-colors p-1">
+      <a href="${safeParentPath}" class="block hover:bg-amber-100 rounded transition-colors p-1">
         <div class="text-xs text-amber-700 font-semibold mb-1">Replying to</div>
         <div class="flex items-start gap-2">
           ${parentAvatarHtml}
           <div class="min-w-0">
-            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${parentName}</div>
+            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${safeParentName}</div>
             <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${preview || '(no content)'}</div>
           </div>
         </div>
@@ -1300,7 +1321,7 @@ async function renderReferencedEventCards(
         referencedProfile,
       );
       const referencedContentWithUnicodeEmoji: string = replaceEmojiShortcodes(
-        referencedEvent.content,
+        escapeHtmlAttribute(referencedEvent.content),
       );
       const referencedContent: string = replaceCustomEmojiShortcodes(
         referencedContentWithUnicodeEmoji,
@@ -1311,24 +1332,28 @@ async function renderReferencedEventCards(
           ? `${referencedContent.slice(0, 180)}...`
           : referencedContent;
       const referencedPath: string = `/${eventRef}`;
+      const safeReferencedPath: string = escapeHtmlAttribute(referencedPath);
+      const safeReferencedName: string = escapeHtmlAttribute(referencedName);
 
       const isEnergySavingMode: boolean =
         localStorage.getItem('energy_saving_mode') === 'true';
+      const safeReferencedAvatar: string =
+        normalizeHttpUrl(referencedAvatar) || 'https://placekitten.com/80/80';
       const referencedAvatarHtml: string = isEnergySavingMode
         ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
         : `<img
-            src="${referencedAvatar}"
-            alt="${referencedName}"
+            src="${escapeHtmlAttribute(safeReferencedAvatar)}"
+            alt="${safeReferencedName}"
             class="w-8 h-8 rounded-full object-cover flex-shrink-0"
             onerror="this.src='https://placekitten.com/80/80';"
           />`;
 
       card.innerHTML = `
-                <a href="${referencedPath}" class="block hover:bg-indigo-100 rounded transition-colors p-1">
+                <a href="${safeReferencedPath}" class="block hover:bg-indigo-100 rounded transition-colors p-1">
                     <div class="flex items-start gap-2">
                         ${referencedAvatarHtml}
                         <div class="min-w-0">
-                            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${referencedName}</div>
+                            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${safeReferencedName}</div>
                             <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${referencedText || '(no content)'}</div>
                         </div>
                     </div>
@@ -1346,31 +1371,86 @@ function renderOGPCard(ogpData: OGPResponse, container: HTMLElement): void {
     ogpData.data['og:title'] || ogpData.data.title || 'No title';
   const description: string =
     ogpData.data['og:description'] || ogpData.data.description || '';
-  const image: string | undefined = ogpData.data['og:image'];
   const siteName: string = ogpData.data['og:site_name'] || '';
-  const url: string = ogpData.url;
+  const url: string | null = normalizeHttpUrl(ogpData.url);
+  const image: string | null = ogpData.data['og:image']
+    ? normalizeHttpUrl(ogpData.data['og:image'])
+    : null;
+  if (!url) {
+    return;
+  }
 
   const card: HTMLDivElement = document.createElement('div');
   card.className =
     'border border-gray-300 rounded-lg overflow-hidden my-2 hover:shadow-md transition-shadow bg-white';
+  const link: HTMLAnchorElement = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.className = 'block no-underline';
 
-  card.innerHTML = `
-        <a href="${url}" target="_blank" rel="noopener noreferrer" class="block no-underline">
-            ${image ? `<img src="${image}" alt="${title}" class="w-full h-48 object-cover" loading="lazy" onerror="this.style.display='none';" />` : ''}
-            <div class="p-3">
-                ${siteName ? `<div class="text-xs text-gray-500 mb-1">${siteName}</div>` : ''}
-                <div class="font-semibold text-gray-900 text-sm mb-1 line-clamp-2">${title}</div>
-                ${description ? `<div class="text-xs text-gray-600 line-clamp-2">${description}</div>` : ''}
-            </div>
-        </a>
-    `;
+  if (image) {
+    const imageEl: HTMLImageElement = document.createElement('img');
+    imageEl.src = image;
+    imageEl.alt = title;
+    imageEl.className = 'w-full h-48 object-cover';
+    imageEl.loading = 'lazy';
+    imageEl.onerror = (): void => {
+      imageEl.style.display = 'none';
+    };
+    link.appendChild(imageEl);
+  }
+
+  const body: HTMLDivElement = document.createElement('div');
+  body.className = 'p-3';
+
+  if (siteName) {
+    const siteNameEl: HTMLDivElement = document.createElement('div');
+    siteNameEl.className = 'text-xs text-gray-500 mb-1';
+    siteNameEl.textContent = siteName;
+    body.appendChild(siteNameEl);
+  }
+
+  const titleEl: HTMLDivElement = document.createElement('div');
+  titleEl.className = 'font-semibold text-gray-900 text-sm mb-1 line-clamp-2';
+  titleEl.textContent = title;
+  body.appendChild(titleEl);
+
+  if (description) {
+    const descriptionEl: HTMLDivElement = document.createElement('div');
+    descriptionEl.className = 'text-xs text-gray-600 line-clamp-2';
+    descriptionEl.textContent = description;
+    body.appendChild(descriptionEl);
+  }
+
+  link.appendChild(body);
+  card.appendChild(link);
 
   container.appendChild(card);
 }
 
-function renderTwitterEmbed(embedHTML: string, container: HTMLElement): void {
-  const wrapper: HTMLDivElement = document.createElement('div');
-  wrapper.className = 'my-2';
-  wrapper.innerHTML = embedHTML;
-  container.appendChild(wrapper);
+function renderTwitterEmbed(url: string, container: HTMLElement): void {
+  const safeUrl: string | null = normalizeHttpUrl(url);
+  if (!safeUrl) {
+    return;
+  }
+
+  const card: HTMLDivElement = document.createElement('div');
+  card.className =
+    'my-2 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900';
+
+  const label: HTMLDivElement = document.createElement('div');
+  label.className = 'mb-2 font-semibold';
+  label.textContent = 'X/Twitter post';
+
+  const link: HTMLAnchorElement = document.createElement('a');
+  link.href = safeUrl;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.className = 'break-all text-sky-700 underline hover:text-sky-900';
+  link.textContent = safeUrl;
+
+  card.appendChild(label);
+  card.appendChild(link);
+  container.appendChild(card);
 }
