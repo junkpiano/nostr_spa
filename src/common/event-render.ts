@@ -10,7 +10,15 @@ import type { NostrProfile, PubkeyHex, Npub, NostrEvent, OGPResponse } from "../
 
 const REFERENCED_EVENT_CACHE_LIMIT: number = 1000;
 const referencedEventCache: Map<string, Promise<NostrEvent | null>> = new Map();
-const reactionCache: Map<string, Promise<Map<string, number>>> = new Map();
+interface ReactionAggregate {
+  count: number;
+  key: string;
+  content: string;
+  shortcode?: string;
+  imageUrl?: string;
+}
+
+const reactionCache: Map<string, Promise<Map<string, ReactionAggregate>>> = new Map();
 const reactionEventsCache: Map<string, Promise<NostrEvent[]>> = new Map();
 
 function isValidEmojiImageUrl(url: string): boolean {
@@ -31,7 +39,7 @@ function escapeHtmlAttribute(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function replaceCustomEmojiShortcodes(content: string, tags: string[][]): string {
+function getEmojiTagMap(tags: string[][]): Map<string, string> {
   const emojiTagMap: Map<string, string> = new Map();
   tags.forEach((tag: string[]): void => {
     if (tag[0] !== "emoji") {
@@ -50,6 +58,11 @@ function replaceCustomEmojiShortcodes(content: string, tags: string[][]): string
     }
     emojiTagMap.set(shortcode.toLowerCase(), imageUrl);
   });
+  return emojiTagMap;
+}
+
+function replaceCustomEmojiShortcodes(content: string, tags: string[][]): string {
+  const emojiTagMap: Map<string, string> = getEmojiTagMap(tags);
 
   if (emojiTagMap.size === 0) {
     return content;
@@ -101,14 +114,14 @@ async function fetchEventByIdCached(eventId: string, relays: string[]): Promise<
   return request;
 }
 
-async function fetchReactions(eventId: string, relays: string[]): Promise<Map<string, number>> {
-  const cached: Promise<Map<string, number>> | undefined = reactionCache.get(eventId);
+async function fetchReactions(eventId: string, relays: string[]): Promise<Map<string, ReactionAggregate>> {
+  const cached: Promise<Map<string, ReactionAggregate>> | undefined = reactionCache.get(eventId);
   if (cached) {
     return cached;
   }
 
-  const request: Promise<Map<string, number>> = new Promise<Map<string, number>>((resolve) => {
-    const counts: Map<string, number> = new Map();
+  const request: Promise<Map<string, ReactionAggregate>> = new Promise<Map<string, ReactionAggregate>>((resolve) => {
+    const counts: Map<string, ReactionAggregate> = new Map();
     const seenReactionIds: Set<string> = new Set();
 
     const promises = relays.map(async (relayUrl: string): Promise<void> => {
@@ -146,9 +159,13 @@ async function fetchReactions(eventId: string, relays: string[]): Promise<Map<st
                 return;
               }
               seenReactionIds.add(event.id);
-              const reaction: string = normalizeReaction(event.content);
-              const current: number = counts.get(reaction) || 0;
-              counts.set(reaction, current + 1);
+              const reaction: ReactionAggregate = getReactionAggregate(event.content, event.tags);
+              const existing: ReactionAggregate | undefined = counts.get(reaction.key);
+              if (existing) {
+                existing.count += 1;
+              } else {
+                counts.set(reaction.key, reaction);
+              }
             } else if (arr[0] === "EOSE") {
               finish();
             }
@@ -246,6 +263,31 @@ function normalizeReaction(content: string | undefined): string {
   return trimmed ? trimmed : "❤";
 }
 
+function getReactionAggregate(content: string | undefined, tags: string[][]): ReactionAggregate {
+  const normalizedContent: string = normalizeReaction(content);
+  const customMatch: RegExpMatchArray | null = normalizedContent.match(/^:([a-z0-9_+-]+):$/i);
+  const shortcodeMatch: string | undefined = customMatch?.[1];
+  if (shortcodeMatch) {
+    const shortcode: string = shortcodeMatch;
+    const emojiTagMap: Map<string, string> = getEmojiTagMap(tags);
+    const imageUrl: string | undefined = emojiTagMap.get(shortcode.toLowerCase());
+    if (imageUrl) {
+      return {
+        count: 1,
+        key: `custom:${shortcode.toLowerCase()}:${imageUrl}`,
+        content: `:${shortcode}:`,
+        shortcode,
+        imageUrl,
+      };
+    }
+  }
+  return {
+    count: 1,
+    key: `text:${normalizedContent}`,
+    content: normalizedContent,
+  };
+}
+
 function resolveParentAuthorPubkey(event: NostrEvent): PubkeyHex | null {
   const pTags: string[][] = event.tags.filter((tag: string[]): boolean => tag[0] === "p");
   const replyTag: string[] | undefined = pTags.find((tag: string[]): boolean => tag[3] === "reply");
@@ -283,26 +325,39 @@ export async function loadReactionsForEvent(
 ): Promise<void> {
   const relays: string[] = getRelays();
   try {
-    const counts: Map<string, number> = await fetchReactions(eventId, relays);
+    const counts: Map<string, ReactionAggregate> = await fetchReactions(eventId, relays);
     if (counts.size === 0) {
       container.innerHTML = "";
       return;
     }
 
-    const entries: Array<[string, number]> = Array.from(counts.entries());
-    entries.sort((a: [string, number], b: [string, number]): number => b[1] - a[1]);
-    const top: Array<[string, number]> = entries.slice(0, 5);
+    const entries: ReactionAggregate[] = Array.from(counts.values());
+    entries.sort((a: ReactionAggregate, b: ReactionAggregate): number => b.count - a.count);
+    const top: ReactionAggregate[] = entries.slice(0, 5);
 
     container.innerHTML = "";
-    top.forEach(([reaction, count]: [string, number]): void => {
+    top.forEach((reaction: ReactionAggregate): void => {
       const badge: HTMLSpanElement = document.createElement("span");
       badge.className = "relative inline-flex items-center gap-1 rounded-full bg-white border border-gray-200 px-2 py-1 cursor-pointer hover:bg-gray-50 transition-colors";
-      badge.dataset.reaction = reaction;
-      const emojiEl: HTMLSpanElement = document.createElement("span");
-      emojiEl.textContent = reaction;
+      badge.dataset.reaction = reaction.key;
+      let emojiEl: HTMLSpanElement | HTMLImageElement;
+      if (reaction.imageUrl && reaction.shortcode) {
+        const imageEl: HTMLImageElement = document.createElement("img");
+        imageEl.src = reaction.imageUrl;
+        imageEl.alt = `:${reaction.shortcode}:`;
+        imageEl.title = `:${reaction.shortcode}:`;
+        imageEl.className = "inline-block h-5 w-5 align-text-bottom";
+        imageEl.loading = "lazy";
+        imageEl.decoding = "async";
+        emojiEl = imageEl;
+      } else {
+        const textEl: HTMLSpanElement = document.createElement("span");
+        textEl.textContent = reaction.content;
+        emojiEl = textEl;
+      }
       const countEl: HTMLSpanElement = document.createElement("span");
       countEl.className = "font-semibold text-gray-700";
-      countEl.textContent = count.toString();
+      countEl.textContent = reaction.count.toString();
       badge.appendChild(emojiEl);
       badge.appendChild(countEl);
 
@@ -329,7 +384,7 @@ export async function loadReactionsForEvent(
         }
         positionTooltip();
         tooltip.style.display = "block";
-        loadReactionDetails(eventId, reaction, tooltip);
+        loadReactionDetails(eventId, reaction.key, tooltip);
       };
 
       const hideTooltip = (): void => {
@@ -363,15 +418,15 @@ export async function loadReactionsForEvent(
   }
 }
 
-async function loadReactionDetails(eventId: string, reaction: string, container: HTMLElement): Promise<void> {
-  container.dataset.reaction = reaction;
+async function loadReactionDetails(eventId: string, reactionKey: string, container: HTMLElement): Promise<void> {
+  container.dataset.reaction = reactionKey;
   container.innerHTML = "<div class=\"text-xs text-gray-500\">Loading reactions...</div>";
 
   const relays: string[] = getRelays();
   try {
     const events: NostrEvent[] = await fetchReactionEvents(eventId, relays);
     const filtered: NostrEvent[] = events.filter(
-      (event: NostrEvent): boolean => normalizeReaction(event.content) === reaction,
+      (event: NostrEvent): boolean => getReactionAggregate(event.content, event.tags).key === reactionKey,
     );
 
     if (filtered.length === 0) {
@@ -426,7 +481,7 @@ async function loadReactionDetails(eventId: string, reaction: string, container:
 async function publishReaction(
   eventId: string,
   targetPubkey: PubkeyHex,
-  reaction: string,
+  reaction: ReactionAggregate,
 ): Promise<void> {
   const storedPubkey: string | null = localStorage.getItem("nostr_pubkey");
   if (!storedPubkey) {
@@ -442,8 +497,11 @@ async function publishReaction(
       ["e", eventId],
       ["p", targetPubkey],
     ],
-    content: reaction,
+    content: reaction.content,
   };
+  if (reaction.shortcode && reaction.imageUrl) {
+    unsignedEvent.tags.push(["emoji", reaction.shortcode, reaction.imageUrl]);
+  }
 
   let signedEvent: NostrEvent;
   if ((window as any).nostr && (window as any).nostr.signEvent) {
