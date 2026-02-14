@@ -5,23 +5,81 @@ import { getCachedProfile, setCachedProfile } from "./profile-cache.js";
 import type { NostrProfile, PubkeyHex, Npub } from "../../../types/nostr";
 
 /**
- * Converts URLs in text to clickable links
+ * Escapes text for safe HTML rendering.
  */
-function convertUrlsToLinks(text: string): string {
-    return text.replace(
-        /(https?:\/\/[^\s]+)/g,
-        (url: string): string => {
-            // Escape HTML in the URL for display
-            const displayUrl = url
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
-            return `<a href="${displayUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-700 underline font-medium">${displayUrl}</a>`;
+function isValidEmojiImageUrl(url: string): boolean {
+    try {
+        const parsed: URL = new URL(url);
+        return parsed.protocol === "https:" || parsed.protocol === "http:";
+    } catch {
+        return false;
+    }
+}
+
+function buildEmojiTagMap(emojiTags: string[][]): Map<string, string> {
+    const emojiTagMap: Map<string, string> = new Map();
+    emojiTags.forEach((tag: string[]): void => {
+        if (tag[0] !== "emoji") {
+            return;
         }
-    );
+        const shortcode: string | undefined = tag[1];
+        const imageUrl: string | undefined = tag[2];
+        if (!shortcode || !imageUrl) {
+            return;
+        }
+        if (!/^[a-z0-9_]+$/i.test(shortcode)) {
+            return;
+        }
+        if (!isValidEmojiImageUrl(imageUrl)) {
+            return;
+        }
+        emojiTagMap.set(shortcode.toLowerCase(), imageUrl);
+    });
+    return emojiTagMap;
+}
+
+function emojifySegmentToHtml(segment: string, emojiTagMap: Map<string, string>): string {
+    const escaped: string = escapeHtml(segment);
+    return escaped.replace(/:([a-z0-9_]+):/gi, (match: string, code: string): string => {
+        const imageUrl: string | undefined = emojiTagMap.get(code.toLowerCase());
+        if (!imageUrl) {
+            return match;
+        }
+        const safeCode: string = escapeHtml(code);
+        const safeUrl: string = escapeHtml(imageUrl);
+        return `<img src="${safeUrl}" alt=":${safeCode}:" title=":${safeCode}:" class="inline-block align-text-bottom h-5 w-5 mx-0.5" loading="lazy" decoding="async" />`;
+    });
+}
+
+/**
+ * Converts URLs in text to clickable links and emojifies NIP-30 shortcodes.
+ */
+function emojifyAndLinkify(text: string, emojiTags: string[][]): string {
+    const emojiTagMap: Map<string, string> = buildEmojiTagMap(emojiTags);
+    const urlRegex: RegExp = /(https?:\/\/[^\s]+)/g;
+    let cursor: number = 0;
+    let html: string = "";
+    let match: RegExpExecArray | null = urlRegex.exec(text);
+    while (match) {
+        const url: string = match[0];
+        const index: number = match.index;
+        html += emojifySegmentToHtml(text.slice(cursor, index), emojiTagMap);
+        const safeUrl: string = escapeHtml(url);
+        html += `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-700 underline font-medium">${safeUrl}</a>`;
+        cursor = index + url.length;
+        match = urlRegex.exec(text);
+    }
+    html += emojifySegmentToHtml(text.slice(cursor), emojiTagMap);
+    return html;
 }
 
 interface FetchProfileOptions {
@@ -107,6 +165,13 @@ export async function fetchProfile(
                         if (arr[0] === "EVENT" && arr[2]?.kind === 0) {
                             try {
                                 const parsed: NostrProfile = JSON.parse(arr[2].content);
+                                const emojiTags: string[][] = Array.isArray(arr[2].tags)
+                                    ? arr[2].tags.filter(
+                                        (tag: unknown): tag is string[] =>
+                                            Array.isArray(tag) && tag[0] === "emoji",
+                                    )
+                                    : [];
+                                parsed.emojiTags = emojiTags;
                                 finish(parsed);
                                 return;
                             } catch (e) {
@@ -153,19 +218,13 @@ export async function fetchProfile(
 
 export function renderProfile(pubkey: PubkeyHex, npub: Npub, profile: NostrProfile | null, profileSection: HTMLElement): void {
     const avatar: string = getAvatarURL(pubkey, profile);
-    const name: string = getDisplayName(npub, profile);
+    const rawName: string = getDisplayName(npub, profile);
     const banner: string | undefined = profile?.banner;
+    const emojiTags: string[][] = profile?.emojiTags || [];
     const isEnergySavingMode: boolean = localStorage.getItem("energy_saving_mode") === "true";
 
-    // Convert URLs to links in bio
-    const bioHtml: string = profile?.about
-        ? convertUrlsToLinks(
-            profile.about
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-        )
-        : '';
+    const nameHtml: string = emojifyAndLinkify(rawName, emojiTags);
+    const bioHtml: string = profile?.about ? emojifyAndLinkify(profile.about, emojiTags) : '';
 
     // Avatar HTML based on energy saving mode
     const avatarHtml: string = isEnergySavingMode
@@ -187,7 +246,7 @@ export function renderProfile(pubkey: PubkeyHex, npub: Npub, profile: NostrProfi
       ${bannerHtml}
       <div class="relative flex flex-col items-center ${banner && !isEnergySavingMode ? 'py-12 px-4' : 'py-6'}">
         ${avatarHtml}
-        <h2 class="font-bold text-lg ${banner && !isEnergySavingMode ? 'text-white drop-shadow-lg' : 'text-gray-900'}">${name}</h2>
+        <h2 class="font-bold text-lg ${banner && !isEnergySavingMode ? 'text-white drop-shadow-lg' : 'text-gray-900'}">${nameHtml}</h2>
         ${bioHtml ? `<p class="${banner && !isEnergySavingMode ? 'text-white/90 drop-shadow' : 'text-gray-600'} text-sm mt-1 text-center max-w-2xl break-words px-4 w-full whitespace-pre-wrap">${bioHtml}</p>` : ""}
         <div id="follow-action" class="mt-4"></div>
       </div>

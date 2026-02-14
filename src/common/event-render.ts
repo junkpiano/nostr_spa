@@ -50,7 +50,7 @@ function getEmojiTagMap(tags: string[][]): Map<string, string> {
     if (!shortcode || !imageUrl) {
       return;
     }
-    if (!/^[a-z0-9_+-]+$/i.test(shortcode)) {
+    if (!/^[a-z0-9_]+$/i.test(shortcode)) {
       return;
     }
     if (!isValidEmojiImageUrl(imageUrl)) {
@@ -68,7 +68,7 @@ function replaceCustomEmojiShortcodes(content: string, tags: string[][]): string
     return content;
   }
 
-  return content.replace(/:([a-z0-9_+-]+):/gi, (match: string, code: string): string => {
+  return content.replace(/:([a-z0-9_]+):/gi, (match: string, code: string): string => {
     const imageUrl: string | undefined = emojiTagMap.get(code.toLowerCase());
     if (!imageUrl) {
       return match;
@@ -265,7 +265,7 @@ function normalizeReaction(content: string | undefined): string {
 
 function getReactionAggregate(content: string | undefined, tags: string[][]): ReactionAggregate {
   const normalizedContent: string = normalizeReaction(content);
-  const customMatch: RegExpMatchArray | null = normalizedContent.match(/^:([a-z0-9_+-]+):$/i);
+  const customMatch: RegExpMatchArray | null = normalizedContent.match(/^:([a-z0-9_]+):$/i);
   const shortcodeMatch: string | undefined = customMatch?.[1];
   if (shortcodeMatch) {
     const shortcode: string = shortcodeMatch;
