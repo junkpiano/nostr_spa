@@ -65,7 +65,8 @@ const composeButton: HTMLElement | null =
 const connectingMsg: HTMLElement | null =
   document.getElementById('connecting-msg');
 let relays: string[] = getRelays();
-const limit: number = 100;
+// Fetch a solid chunk up-front; pagination ("Load more") is currently disabled for stability.
+const limit: number = 200;
 const seenEventIds: Set<string> = new Set();
 let untilTimestamp: number = Math.floor(Date.now() / 1000);
 let profile: NostrProfile | null = null;
@@ -241,19 +242,7 @@ function getRestoreTimelineCount(
   return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
 }
 
-function replaceLoadMoreButtonHandler(onClick: () => Promise<void>): void {
-  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
-  if (!loadMoreBtn || !loadMoreBtn.parentNode) {
-    return;
-  }
-  const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
-    true,
-  ) as HTMLElement;
-  loadMoreBtn.parentNode.replaceChild(newLoadMoreBtn, loadMoreBtn);
-  newLoadMoreBtn.addEventListener('click', (): void => {
-    void onClick();
-  });
-}
+// Pagination ("Load more") is currently disabled for stability.
 
 async function restoreTimelineFromCache(params: {
   type: 'home' | 'global';
@@ -358,9 +347,122 @@ function showNewEventsNotification(_timelineType: string, count: number): void {
   `;
 
   notification.addEventListener('click', (): void => {
-    // Reload the current timeline
-    handleRoute();
-    notification.remove();
+    // Force a relay refresh instead of going through handleRoute(), because
+    // handleRoute() may restore from cache for back/forward navigations.
+    void (async (): Promise<void> => {
+      notification.remove();
+
+      const path: string = window.location.pathname;
+      if (path === '/home') {
+        const storedPubkey: string | null =
+          localStorage.getItem('nostr_pubkey');
+        if (!storedPubkey || !output) {
+          handleRoute();
+          return;
+        }
+
+        // Prefer the cached follow list; fall back to refetching if missing.
+        const followedPubkeys: PubkeyHex[] =
+          (cachedHomeTimeline?.followedPubkeys as PubkeyHex[] | undefined) ||
+          [];
+
+        output.innerHTML = '';
+        seenEventIds.clear();
+        untilTimestamp = Math.floor(Date.now() / 1000);
+        newestEventTimestamp = untilTimestamp;
+
+        const routeGuard: () => boolean = createRouteGuard();
+        if (followedPubkeys.length > 0) {
+          await loadHomeTimeline(
+            followedPubkeys,
+            homeKinds,
+            relays,
+            limit,
+            untilTimestamp,
+            seenEventIds,
+            output,
+            connectingMsg,
+            activeWebSockets,
+            activeTimeouts,
+            routeGuard,
+            storedPubkey as PubkeyHex,
+          );
+        } else {
+          await loadUserHomeTimeline({
+            pubkeyHex: storedPubkey as PubkeyHex,
+            relays,
+            output,
+            profileSection,
+            connectingMsg,
+            homeKinds,
+            limit,
+            seenEventIds,
+            activeWebSockets,
+            activeTimeouts,
+            setUntilTimestamp: (value: number): void => {
+              untilTimestamp = value;
+            },
+            setNewestEventTimestamp: (value: number): void => {
+              newestEventTimestamp = value;
+            },
+            setCachedHomeTimeline: (
+              followedWithSelf: PubkeyHex[],
+              seen: Set<string>,
+            ): void => {
+              cachedHomeTimeline = {
+                events: Array.from(seen),
+                followedPubkeys: followedWithSelf,
+                timestamp: Date.now(),
+              };
+            },
+            startBackgroundFetch,
+            isRouteActive: routeGuard,
+          });
+        }
+
+        // Best-effort: align the background fetch cursor to the newest cached event.
+        try {
+          const newest: number = await getTimelineNewestTimestamp(
+            'home',
+            storedPubkey as PubkeyHex,
+          );
+          if (Number.isFinite(newest) && newest > 0) {
+            newestEventTimestamp = newest;
+          }
+        } catch {
+          // Best-effort only.
+        }
+        return;
+      }
+
+      if (path === '/global') {
+        if (!output) {
+          handleRoute();
+          return;
+        }
+
+        output.innerHTML = '';
+        seenEventIds.clear();
+        untilTimestamp = Math.floor(Date.now() / 1000);
+
+        const routeGuard: () => boolean = createRouteGuard();
+        await loadGlobalTimeline(
+          relays,
+          limit,
+          untilTimestamp,
+          seenEventIds,
+          output,
+          connectingMsg,
+          activeWebSockets,
+          activeTimeouts,
+          routeGuard,
+        );
+        return;
+      }
+
+      // Fallback for other routes.
+      handleRoute();
+    })();
   });
 
   document.body.appendChild(notification);
@@ -964,31 +1066,6 @@ async function loadHomePage(
         newestEventTimestamp =
           restored.newestTimestamp || Math.floor(Date.now() / 1000);
 
-        // Keep pagination working when restoring from cache.
-        replaceLoadMoreButtonHandler(async (): Promise<void> => {
-          const followedPubkeys: PubkeyHex[] =
-            (cachedHomeTimeline?.followedPubkeys as PubkeyHex[] | undefined) ||
-            [];
-          if (followedPubkeys.length === 0 || !output) {
-            return;
-          }
-          const routeGuard: () => boolean = createRouteGuard();
-          await loadHomeTimeline(
-            followedPubkeys,
-            homeKinds,
-            relays,
-            limit,
-            untilTimestamp,
-            seenEventIds,
-            output,
-            connectingMsg,
-            activeWebSockets,
-            activeTimeouts,
-            routeGuard,
-            storedPubkey as PubkeyHex,
-          );
-        });
-
         if (
           !backgroundFetchInterval &&
           cachedHomeTimeline?.followedPubkeys?.length
@@ -1196,21 +1273,6 @@ async function loadGlobalPage(
     if (restored.restored && isRouteActive()) {
       untilTimestamp =
         restored.oldestTimestamp || Math.floor(Date.now() / 1000);
-      replaceLoadMoreButtonHandler(async (): Promise<void> => {
-        if (!output) return;
-        const routeGuard: () => boolean = createRouteGuard();
-        await loadGlobalTimeline(
-          relays,
-          limit,
-          untilTimestamp,
-          seenEventIds,
-          output,
-          connectingMsg,
-          activeWebSockets,
-          activeTimeouts,
-          routeGuard,
-        );
-      });
       return;
     }
   }

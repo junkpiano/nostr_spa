@@ -958,6 +958,9 @@ export function renderEvent(
   const div: HTMLDivElement = document.createElement('div');
   div.className =
     'bg-gray-50 border border-gray-200 rounded p-4 shadow event-container cursor-pointer hover:bg-gray-100/60 transition-colors';
+  // Used by timelines to keep DOM ordering stable without re-rendering.
+  div.dataset.eventId = event.id;
+  div.dataset.createdAt = String(event.created_at);
   div.dataset.pubkey = pubkey;
   if (imageUrls.length > 0) {
     div.dataset.images = JSON.stringify(imageUrls);

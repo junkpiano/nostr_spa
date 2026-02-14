@@ -37,7 +37,6 @@ export async function loadGlobalTimeline(
   if (!routeIsActive()) {
     return;
   }
-  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
   // If we're paginating ("Load more"), the output already has rendered events.
   // Never clear it in that case; only clear placeholder/loading content.
   let clearedPlaceholder: boolean =
@@ -125,11 +124,7 @@ export async function loadGlobalTimeline(
   if (connectingMsg && !clearedPlaceholder) {
     connectingMsg.style.display = ''; // Show connecting message
   }
-
-  if (loadMoreBtn) {
-    (loadMoreBtn as HTMLButtonElement).disabled = true;
-    loadMoreBtn.classList.add('opacity-50', 'cursor-not-allowed');
-  }
+  // Pagination ("Load more") is currently disabled for stability.
 
   // Use rx-nostr to fetch events
   const rxNostr = getRxNostr();
@@ -273,10 +268,6 @@ export async function loadGlobalTimeline(
       if (connectingMsg) {
         connectingMsg.style.display = 'none';
       }
-      if (loadMoreBtn) {
-        (loadMoreBtn as HTMLButtonElement).disabled = false;
-        loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      }
     },
     complete: () => {
       relayCompletionCount = relays.length;
@@ -376,38 +367,7 @@ export async function loadGlobalTimeline(
     if (connectingMsg) {
       connectingMsg.style.display = 'none';
     }
-
-    if (loadMoreBtn) {
-      (loadMoreBtn as HTMLButtonElement).disabled = false;
-      loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      // Only show load more button if we have events
-      if (hasEvents || seenEventIds.size > 0) {
-        loadMoreBtn.style.display = 'inline';
-      }
-    }
   }, 8000); // Safety timeout to ensure loading completes even if relays don't respond
   activeTimeouts.push(timeoutId);
-
-  if (loadMoreBtn) {
-    // Remove old listeners and add new one
-    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
-      true,
-    ) as HTMLElement;
-    loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
-    newLoadMoreBtn.addEventListener(
-      'click',
-      (): Promise<void> =>
-        loadGlobalTimeline(
-          relays,
-          limit,
-          untilTimestamp,
-          seenEventIds,
-          output,
-          connectingMsg,
-          [],
-          activeTimeouts,
-          routeIsActive,
-        ),
-    );
-  }
+  // Pagination ("Load more") is currently disabled for stability.
 }

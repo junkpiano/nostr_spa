@@ -186,7 +186,7 @@ async function syncTimelineViaFetch(timelineType, userPubkey, followedPubkeys) {
     }
 
     // Store events in IndexedDB
-    await storeEventsInDB(db, newEvents);
+    await storeEventsInDB(db, newEvents, timelineType);
 
     // Update timeline index
     await updateTimelineIndex(db, timelineType, userPubkey, newEvents);
@@ -247,8 +247,21 @@ function openDB() {
   });
 }
 
+function getTimelineKey(type, pubkey) {
+  if (type === 'home') {
+    return `home:${pubkey || ''}`;
+  }
+  if (type === 'global') {
+    return 'global';
+  }
+  if (type === 'user') {
+    return `user:${pubkey || ''}`;
+  }
+  return `${type}:${pubkey || ''}`;
+}
+
 async function getTimelineNewestTimestamp(db, type, pubkey) {
-  const key = `${type}:${pubkey || ''}`;
+  const key = getTimelineKey(type, pubkey);
   return new Promise((resolve, reject) => {
     try {
       const tx = db.transaction('timelines', 'readonly');
@@ -367,17 +380,21 @@ async function fetchNewEventsFromRelays(
   return events;
 }
 
-async function storeEventsInDB(db, events) {
+async function storeEventsInDB(db, events, timelineType) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('events', 'readwrite');
     const store = tx.objectStore('events');
 
+    const now = Date.now();
     for (const event of events) {
       store.put({
         id: event.id,
         event: event,
-        cachedAt: Date.now(),
-        isHomeTimeline: false,
+        pubkey: event.pubkey,
+        kind: event.kind,
+        created_at: event.created_at,
+        storedAt: now,
+        isHomeTimeline: timelineType === 'home',
       });
     }
 
@@ -387,7 +404,7 @@ async function storeEventsInDB(db, events) {
 }
 
 async function updateTimelineIndex(db, type, pubkey, events) {
-  const key = `${type}:${pubkey || ''}`;
+  const key = getTimelineKey(type, pubkey);
 
   return new Promise((resolve, reject) => {
     const tx = db.transaction('timelines', 'readwrite');
@@ -398,20 +415,36 @@ async function updateTimelineIndex(db, type, pubkey, events) {
     request.onsuccess = () => {
       const timeline = request.result;
 
+      const eventIds = events.map((e) => e.id);
+      const maxTimestamp = Math.max(...events.map((e) => e.created_at));
+      const minTimestamp = Math.min(...events.map((e) => e.created_at));
+
       if (timeline) {
-        const eventIds = events.map((e) => e.id);
-        const existingSet = new Set(timeline.eventIds);
+        const existingSet = new Set(timeline.eventIds || []);
         const newEventIds = eventIds.filter((id) => !existingSet.has(id));
 
-        timeline.eventIds = [...newEventIds, ...timeline.eventIds];
-        timeline.newestTimestamp = Math.max(
-          timeline.newestTimestamp,
-          ...events.map((e) => e.created_at),
-        );
+        timeline.eventIds = [...newEventIds, ...(timeline.eventIds || [])];
+        timeline.newestTimestamp = Math.max(timeline.newestTimestamp || 0, maxTimestamp);
+        // New events are newer, so oldestTimestamp generally should not move here.
+        timeline.oldestTimestamp =
+          typeof timeline.oldestTimestamp === 'number' && timeline.oldestTimestamp > 0
+            ? timeline.oldestTimestamp
+            : minTimestamp;
         timeline.updatedAt = Date.now();
-
         store.put(timeline);
+        return;
       }
+
+      // Create timeline if missing (matches main app schema).
+      store.put({
+        key,
+        type,
+        pubkey: pubkey || undefined,
+        eventIds,
+        newestTimestamp: maxTimestamp,
+        oldestTimestamp: minTimestamp,
+        updatedAt: Date.now(),
+      });
     };
 
     tx.oncomplete = () => resolve();
