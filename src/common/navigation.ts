@@ -31,6 +31,11 @@ export function setActiveNav(
     settingsButton.classList.remove('bg-indigo-100', 'text-indigo-700');
     settingsButton.classList.add('text-gray-700');
   }
+  const aboutButton: HTMLElement | null = document.getElementById('nav-about');
+  if (aboutButton) {
+    aboutButton.classList.remove('bg-indigo-100', 'text-indigo-700');
+    aboutButton.classList.add('text-gray-700');
+  }
 
   if (activeButton) {
     activeButton.classList.remove('text-gray-700');
@@ -44,6 +49,7 @@ export function setupNavigation(options: NavigationOptions): void {
   const notificationsButton: HTMLElement | null = document.getElementById('nav-notifications');
   const relaysButton: HTMLElement | null = document.getElementById('nav-relays');
   const settingsButton: HTMLElement | null = document.getElementById('nav-settings');
+  const aboutButton: HTMLElement | null = document.getElementById('nav-about');
   const logoutButton: HTMLElement | null = document.getElementById('nav-logout');
   const mobileMenuButton: HTMLElement | null = document.getElementById('mobile-menu-button');
   const sidebar: HTMLElement | null = document.getElementById('sidebar');
@@ -137,6 +143,13 @@ export function setupNavigation(options: NavigationOptions): void {
   if (settingsButton) {
     settingsButton.addEventListener('click', wrapNavigationHandler((): void => {
       window.history.pushState(null, '', '/settings');
+      options.handleRoute();
+    }));
+  }
+
+  if (aboutButton) {
+    aboutButton.addEventListener('click', wrapNavigationHandler((): void => {
+      window.history.pushState(null, '', '/about');
       options.handleRoute();
     }));
   }

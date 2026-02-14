@@ -10,6 +10,7 @@ import { getAllRelays, getRelays, setRelays, recordRelayFailure, normalizeRelayU
 import { loadRelaysPage } from "../features/relays/relays-page.js";
 import { broadcastRecentPosts } from "../features/broadcast/broadcast.js";
 import { loadSettingsPage } from "../features/settings/settings-page.js";
+import { loadAboutPage } from "../features/about/about-page.js";
 import { setupFollowToggle, publishEventToRelays } from "../features/profile/follow.js";
 import { setupSearchBar } from "../common/search.js";
 import { isNip05Identifier, resolveNip05 } from "../common/nip05.js";
@@ -324,6 +325,30 @@ function handleRoute(): void {
     });
   } else if (path === "/settings") {
     loadSettingsPage({
+      closeAllWebSockets,
+      stopBackgroundFetch: (): void => {
+        if (backgroundFetchInterval) {
+          clearInterval(backgroundFetchInterval);
+          backgroundFetchInterval = null;
+        }
+      },
+      clearNotification: (): void => {
+        const notification = document.getElementById("new-posts-notification");
+        if (notification) {
+          notification.remove();
+        }
+      },
+      setActiveNav,
+      profileSection,
+      output,
+    });
+  } else if (path === "/about") {
+    const notificationsButton: HTMLElement | null = document.getElementById("nav-notifications");
+    if (notificationsButton) {
+      notificationsButton.classList.remove("bg-indigo-100", "text-indigo-700");
+      notificationsButton.classList.add("text-gray-700");
+    }
+    loadAboutPage({
       closeAllWebSockets,
       stopBackgroundFetch: (): void => {
         if (backgroundFetchInterval) {
