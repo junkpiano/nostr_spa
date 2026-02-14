@@ -26,6 +26,10 @@ export function getAllRelays(): string[] {
   return relays;
 }
 
+export function didUserConfigureRelays(): boolean {
+  return localStorage.getItem(RELAYS_STORAGE_KEY) !== null;
+}
+
 export function setRelays(relayList: string[]): void {
   const unique: string[] = Array.from(new Set(relayList));
   localStorage.setItem(RELAYS_STORAGE_KEY, JSON.stringify(unique));

@@ -50,8 +50,7 @@ export async function loadHomeTimeline(
   let cachedNewestRenderedTimestamp: number = 0;
   // If we're paginating ("Load more"), the output already has rendered events.
   // Never clear it in that case; only clear placeholder/loading content.
-  let clearedPlaceholder: boolean =
-    hadRenderedEventsAtStart;
+  let clearedPlaceholder: boolean = hadRenderedEventsAtStart;
 
   if (followedPubkeys.length === 0) {
     if (output) {

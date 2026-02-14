@@ -11,6 +11,8 @@ interface RelaysPageOptions {
   normalizeRelayUrl: (rawUrl: string) => string | null;
   onRelaysChanged: () => void;
   onBroadcastRequested?: () => Promise<void>;
+  onNip65ImportRequested?: () => Promise<void>;
+  onNip65PublishRequested?: () => Promise<void>;
   profileSection: HTMLElement | null;
   output: HTMLElement | null;
 }
@@ -59,6 +61,24 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
         <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-3 text-xs">
           When you add a new relay, use Broadcast to re-send your recent posts to it.
         </div>
+        <div class="bg-slate-50 border border-slate-200 text-slate-900 rounded-lg p-3 text-xs space-y-2">
+          <div class="font-semibold">NIP-65 (kind 10002) Relay List</div>
+          <div class="text-slate-700">
+            You can publish your relay list to Nostr (so other clients can discover it), or import it back into this app.
+          </div>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <button id="nip65-import"
+              class="bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow">
+              Import From NIP-65
+            </button>
+            <button id="nip65-publish"
+              class="bg-indigo-700 hover:bg-indigo-800 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow">
+              Publish NIP-65
+            </button>
+            <span class="text-xs text-gray-500 self-center">Requires sign-in for publishing.</span>
+          </div>
+          <p id="nip65-status" class="text-xs text-gray-600"></p>
+        </div>
         <div class="flex flex-col sm:flex-row gap-2">
           <input id="relay-input" type="text" placeholder="wss://relay.example.com"
             class="border border-gray-300 rounded-lg px-4 py-2 flex-1 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -93,6 +113,14 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
   ) as HTMLButtonElement;
   const broadcastStatus: HTMLElement | null =
     document.getElementById('broadcast-status');
+  const nip65ImportButton: HTMLButtonElement | null = document.getElementById(
+    'nip65-import',
+  ) as HTMLButtonElement;
+  const nip65PublishButton: HTMLButtonElement | null = document.getElementById(
+    'nip65-publish',
+  ) as HTMLButtonElement;
+  const nip65Status: HTMLElement | null =
+    document.getElementById('nip65-status');
 
   let currentRelays: string[] = options.getRelays();
   let relayStatusSockets: WebSocket[] = [];
@@ -342,6 +370,68 @@ export function loadRelaysPage(options: RelaysPageOptions): void {
       } finally {
         broadcastButton.disabled = false;
         broadcastButton.classList.remove('opacity-60', 'cursor-not-allowed');
+      }
+    });
+  }
+
+  if (nip65ImportButton) {
+    nip65ImportButton.addEventListener('click', async (): Promise<void> => {
+      if (!options.onNip65ImportRequested) {
+        return;
+      }
+      nip65ImportButton.disabled = true;
+      nip65ImportButton.classList.add('opacity-60', 'cursor-not-allowed');
+      if (nip65Status) {
+        nip65Status.textContent = 'Importing from NIP-65...';
+        nip65Status.className = 'text-xs text-gray-600';
+      }
+      try {
+        await options.onNip65ImportRequested();
+        currentRelays = options.getRelays();
+        renderRelayList();
+        if (nip65Status) {
+          nip65Status.textContent = 'Imported relay list from NIP-65.';
+          nip65Status.className = 'text-xs text-emerald-700';
+        }
+      } catch (error: unknown) {
+        console.error('NIP-65 import failed:', error);
+        if (nip65Status) {
+          nip65Status.textContent = 'Failed to import from NIP-65.';
+          nip65Status.className = 'text-xs text-red-700';
+        }
+      } finally {
+        nip65ImportButton.disabled = false;
+        nip65ImportButton.classList.remove('opacity-60', 'cursor-not-allowed');
+      }
+    });
+  }
+
+  if (nip65PublishButton) {
+    nip65PublishButton.addEventListener('click', async (): Promise<void> => {
+      if (!options.onNip65PublishRequested) {
+        return;
+      }
+      nip65PublishButton.disabled = true;
+      nip65PublishButton.classList.add('opacity-60', 'cursor-not-allowed');
+      if (nip65Status) {
+        nip65Status.textContent = 'Publishing NIP-65 relay list...';
+        nip65Status.className = 'text-xs text-gray-600';
+      }
+      try {
+        await options.onNip65PublishRequested();
+        if (nip65Status) {
+          nip65Status.textContent = 'Published NIP-65 relay list.';
+          nip65Status.className = 'text-xs text-emerald-700';
+        }
+      } catch (error: unknown) {
+        console.error('NIP-65 publish failed:', error);
+        if (nip65Status) {
+          nip65Status.textContent = 'Failed to publish NIP-65 relay list.';
+          nip65Status.className = 'text-xs text-red-700';
+        }
+      } finally {
+        nip65PublishButton.disabled = false;
+        nip65PublishButton.classList.remove('opacity-60', 'cursor-not-allowed');
       }
     });
   }

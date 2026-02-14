@@ -424,10 +424,14 @@ async function updateTimelineIndex(db, type, pubkey, events) {
         const newEventIds = eventIds.filter((id) => !existingSet.has(id));
 
         timeline.eventIds = [...newEventIds, ...(timeline.eventIds || [])];
-        timeline.newestTimestamp = Math.max(timeline.newestTimestamp || 0, maxTimestamp);
+        timeline.newestTimestamp = Math.max(
+          timeline.newestTimestamp || 0,
+          maxTimestamp,
+        );
         // New events are newer, so oldestTimestamp generally should not move here.
         timeline.oldestTimestamp =
-          typeof timeline.oldestTimestamp === 'number' && timeline.oldestTimestamp > 0
+          typeof timeline.oldestTimestamp === 'number' &&
+          timeline.oldestTimestamp > 0
             ? timeline.oldestTimestamp
             : minTimestamp;
         timeline.updatedAt = Date.now();

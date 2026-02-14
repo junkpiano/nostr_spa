@@ -50,10 +50,15 @@ import { loadEvents } from '../features/profile/profile-events.js';
 import {
   getAllRelays,
   getRelays,
+  didUserConfigureRelays,
   normalizeRelayUrl,
   recordRelayFailure,
   setRelays,
 } from '../features/relays/relays.js';
+import {
+  fetchNip65RelayList,
+  signNip65RelayListEvent,
+} from '../features/relays/nip65.js';
 import { loadRelaysPage } from '../features/relays/relays-page.js';
 import { loadSettingsPage } from '../features/settings/settings-page.js';
 
@@ -96,6 +101,54 @@ let activeRouteToken: number = 0;
 let activeWebSockets: WebSocket[] = [];
 // Track active timeouts
 let activeTimeouts: number[] = [];
+
+async function importRelaysFromNip65(): Promise<void> {
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
+  if (!storedPubkey) {
+    throw new Error('Sign-in required.');
+  }
+
+  const result = await fetchNip65RelayList({
+    pubkeyHex: storedPubkey as PubkeyHex,
+    relays: getRelays(),
+  });
+
+  if (!result || result.relayUrls.length === 0) {
+    throw new Error('No NIP-65 relay list found.');
+  }
+
+  setRelays(result.relayUrls);
+  syncRelays();
+}
+
+async function publishRelaysToNip65(): Promise<void> {
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
+  if (!storedPubkey) {
+    throw new Error('Sign-in required.');
+  }
+
+  const relayUrls: string[] = getRelays();
+  const event: NostrEvent = await signNip65RelayListEvent({
+    pubkeyHex: storedPubkey as PubkeyHex,
+    relayUrls,
+  });
+  await publishEventToRelays(event, relayUrls);
+}
+
+async function maybeSyncRelaysFromNip65OnLogin(): Promise<void> {
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
+  if (!storedPubkey) return;
+
+  // Don't surprise users who already customized relays in this browser.
+  if (didUserConfigureRelays()) return;
+
+  try {
+    await importRelaysFromNip65();
+  } catch (error: unknown) {
+    // Best-effort only. Keep defaults if NIP-65 fetch fails or doesn't exist.
+    console.log('[NIP-65] No relay list imported on login:', error);
+  }
+}
 
 function renderLoadingState(message: string, subMessage: string = ''): void {
   if (!output) {
@@ -537,6 +590,9 @@ document.addEventListener('DOMContentLoaded', (): void => {
     onLogout: handleLogout,
   });
 
+  // If the user hasn't customized relays yet, try to discover their NIP-65 relay list.
+  void maybeSyncRelaysFromNip65OnLogin();
+
   // Setup image overlay
   setupImageOverlay();
 
@@ -788,6 +844,8 @@ function handleRoute(scrollRestoreState?: unknown): void {
               setStatus(message, 'error');
             }
           },
+          onNip65ImportRequested: importRelaysFromNip65,
+          onNip65PublishRequested: publishRelaysToNip65,
           profileSection,
           output,
         }),
