@@ -56,7 +56,7 @@ export function setupComposeOverlay(options: ComposeOverlayOptions): void {
     if (hasExtension) {
       statusEl.textContent = 'Signing with extension';
     } else if (hasPrivateKey) {
-      statusEl.textContent = 'Signing with private key (session)';
+      statusEl.textContent = 'Signing with private key';
     } else {
       statusEl.textContent = 'Sign-in required to post';
     }

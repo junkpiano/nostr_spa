@@ -50,7 +50,7 @@ export async function showInputForm(
               Use Private Key
             </button>
           </div>
-          <p class="text-xs text-gray-500">Private keys are stored temporarily in your browser session (cleared when you close the browser). For better security, use a Nostr extension instead.</p>
+          <p class="text-xs text-gray-500">Private keys are stored on this device so you stay logged in after closing the app. Log out to remove it. For better security, use a Nostr extension instead.</p>
         </div>
       </div>
     `;

@@ -2,6 +2,7 @@ import { getPublicKey, nip19 } from 'nostr-tools';
 import type { Npub, PubkeyHex } from '../../types/nostr';
 
 let sessionPrivateKey: Uint8Array | null = null;
+const PRIVATE_KEY_STORAGE_KEY: string = 'nostr_private_key';
 
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) {
@@ -40,11 +41,11 @@ export function setSessionPrivateKeyFromRaw(rawKey: string): PubkeyHex {
   const secretBytes: Uint8Array = parsePrivateKey(rawKey);
   sessionPrivateKey = secretBytes;
 
-  // Store in sessionStorage so it persists across page reloads (but not browser sessions)
+  // Store in localStorage so it persists across full app/browser restarts.
   try {
-    sessionStorage.setItem('nostr_private_key', bytesToHex(secretBytes));
+    localStorage.setItem(PRIVATE_KEY_STORAGE_KEY, bytesToHex(secretBytes));
   } catch (error: unknown) {
-    console.warn('Failed to persist private key in sessionStorage:', error);
+    console.warn('Failed to persist private key in localStorage:', error);
   }
 
   return getPublicKey(secretBytes);
@@ -53,9 +54,10 @@ export function setSessionPrivateKeyFromRaw(rawKey: string): PubkeyHex {
 export function clearSessionPrivateKey(): void {
   sessionPrivateKey = null;
   try {
-    sessionStorage.removeItem('nostr_private_key');
+    localStorage.removeItem(PRIVATE_KEY_STORAGE_KEY);
+    sessionStorage.removeItem(PRIVATE_KEY_STORAGE_KEY);
   } catch (error: unknown) {
-    console.warn('Failed to clear private key from sessionStorage:', error);
+    console.warn('Failed to clear private key from storage:', error);
   }
 }
 
@@ -65,16 +67,27 @@ export function getSessionPrivateKey(): Uint8Array | null {
     return sessionPrivateKey;
   }
 
-  // Try to restore from sessionStorage
+  // Try to restore from localStorage first (persistent login), then migrate any old sessionStorage value.
   try {
-    const storedHex: string | null =
-      sessionStorage.getItem('nostr_private_key');
+    const storedHex: string | null = localStorage.getItem(
+      PRIVATE_KEY_STORAGE_KEY,
+    );
     if (storedHex) {
       sessionPrivateKey = hexToBytes(storedHex);
       return sessionPrivateKey;
     }
+
+    const legacySessionHex: string | null = sessionStorage.getItem(
+      PRIVATE_KEY_STORAGE_KEY,
+    );
+    if (legacySessionHex) {
+      sessionPrivateKey = hexToBytes(legacySessionHex);
+      localStorage.setItem(PRIVATE_KEY_STORAGE_KEY, legacySessionHex);
+      sessionStorage.removeItem(PRIVATE_KEY_STORAGE_KEY);
+      return sessionPrivateKey;
+    }
   } catch (error: unknown) {
-    console.warn('Failed to restore private key from sessionStorage:', error);
+    console.warn('Failed to restore private key from storage:', error);
   }
 
   return null;
