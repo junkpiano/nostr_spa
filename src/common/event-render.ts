@@ -13,6 +13,59 @@ const referencedEventCache: Map<string, Promise<NostrEvent | null>> = new Map();
 const reactionCache: Map<string, Promise<Map<string, number>>> = new Map();
 const reactionEventsCache: Map<string, Promise<NostrEvent[]>> = new Map();
 
+function isValidEmojiImageUrl(url: string): boolean {
+  try {
+    const parsed: URL = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/'/g, "&#39;");
+}
+
+function replaceCustomEmojiShortcodes(content: string, tags: string[][]): string {
+  const emojiTagMap: Map<string, string> = new Map();
+  tags.forEach((tag: string[]): void => {
+    if (tag[0] !== "emoji") {
+      return;
+    }
+    const shortcode: string | undefined = tag[1];
+    const imageUrl: string | undefined = tag[2];
+    if (!shortcode || !imageUrl) {
+      return;
+    }
+    if (!/^[a-z0-9_+-]+$/i.test(shortcode)) {
+      return;
+    }
+    if (!isValidEmojiImageUrl(imageUrl)) {
+      return;
+    }
+    emojiTagMap.set(shortcode.toLowerCase(), imageUrl);
+  });
+
+  if (emojiTagMap.size === 0) {
+    return content;
+  }
+
+  return content.replace(/:([a-z0-9_+-]+):/gi, (match: string, code: string): string => {
+    const imageUrl: string | undefined = emojiTagMap.get(code.toLowerCase());
+    if (!imageUrl) {
+      return match;
+    }
+    const safeCode: string = escapeHtmlAttribute(code);
+    const safeUrl: string = escapeHtmlAttribute(imageUrl);
+    return `<img src="${safeUrl}" alt=":${safeCode}:" title=":${safeCode}:" class="inline-block align-text-bottom h-5 w-5 mx-0.5" loading="lazy" decoding="async" />`;
+  });
+}
+
 function setReferencedEventCache(eventId: string, request: Promise<NostrEvent | null>): void {
   referencedEventCache.delete(eventId);
   referencedEventCache.set(eventId, request);
@@ -532,8 +585,8 @@ export function renderEvent(
   );
   const parentEventId: string | null = isRepost ? null : resolveParentEventId(event);
   const parentAuthorPubkey: PubkeyHex | null = parentEventId ? resolveParentAuthorPubkey(event) : null;
-  const contentWithEmoji: string = replaceEmojiShortcodes(contentSource);
-  const contentWithNostrLinks: string = contentWithEmoji.replace(
+  const contentWithUnicodeEmoji: string = replaceEmojiShortcodes(contentSource);
+  const contentWithNostrLinks: string = contentWithUnicodeEmoji.replace(
     /(nostr:(?:nevent1|note1)[0-9a-z]+)/gi,
     (): string => "",
   );
@@ -585,12 +638,13 @@ export function renderEvent(
     },
   );
 
-  const hasContent: boolean = contentWithLinks.trim().length > 0;
+  const contentWithCustomEmoji: string = replaceCustomEmojiShortcodes(contentWithLinks, event.tags);
+  const hasContent: boolean = contentWithCustomEmoji.trim().length > 0;
   const repostBadgeHtml: string = isRepost
     ? `<span class="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5">🔁 Repost</span>`
     : "";
   const contentHtml: string = hasContent
-    ? `<div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithLinks}</div>`
+    ? `<div class="whitespace-pre-wrap break-words break-all mb-2 text-sm text-gray-700">${contentWithCustomEmoji}</div>`
     : "";
 
   const div: HTMLDivElement = document.createElement("div");
@@ -816,7 +870,8 @@ async function renderParentEventCard(
     const parentNpub: Npub = nip19.npubEncode(parentEvent.pubkey);
     const parentName: string = getDisplayName(parentNpub, parentProfile);
     const parentAvatar: string = getAvatarURL(parentEvent.pubkey, parentProfile);
-    const parentContent: string = replaceEmojiShortcodes(parentEvent.content);
+    const parentContentWithUnicodeEmoji: string = replaceEmojiShortcodes(parentEvent.content);
+    const parentContent: string = replaceCustomEmojiShortcodes(parentContentWithUnicodeEmoji, parentEvent.tags);
     const preview: string = parentContent.length > 220
       ? `${parentContent.slice(0, 220)}...`
       : parentContent;
@@ -1004,7 +1059,11 @@ async function renderReferencedEventCards(eventRefs: string[], container: HTMLEl
       const referencedNpub: Npub = nip19.npubEncode(referencedEvent.pubkey);
       const referencedName: string = getDisplayName(referencedNpub, referencedProfile);
       const referencedAvatar: string = getAvatarURL(referencedEvent.pubkey, referencedProfile);
-      const referencedContent: string = replaceEmojiShortcodes(referencedEvent.content);
+      const referencedContentWithUnicodeEmoji: string = replaceEmojiShortcodes(referencedEvent.content);
+      const referencedContent: string = replaceCustomEmojiShortcodes(
+        referencedContentWithUnicodeEmoji,
+        referencedEvent.tags,
+      );
       const referencedText: string = referencedContent.length > 180
         ? `${referencedContent.slice(0, 180)}...`
         : referencedContent;
