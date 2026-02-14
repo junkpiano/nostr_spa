@@ -16,6 +16,8 @@ import {
   replaceEmojiShortcodes,
 } from '../utils/utils.js';
 import { getCachedEvent, setCachedEvent } from './event-cache.js';
+import { deleteEvents, removeEventFromTimeline } from './db/index.js';
+import { computeTimelineRemovalTargets } from './deletion-targets.js';
 import {
   cacheDeletionStatus,
   fetchEventById,
@@ -40,6 +42,18 @@ const reactionCache: Map<
   Promise<Map<string, ReactionAggregate>>
 > = new Map();
 const reactionEventsCache: Map<string, Promise<NostrEvent[]>> = new Map();
+
+function formatEventTimeLabel(createdAtSeconds: number): string {
+  const nowSeconds: number = Math.floor(Date.now() / 1000);
+  const diffSeconds: number = Math.max(0, nowSeconds - createdAtSeconds);
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  if (diffSeconds < 60 * 60) return `${Math.floor(diffSeconds / 60)}m ago`;
+  if (diffSeconds < 60 * 60 * 24)
+    return `${Math.floor(diffSeconds / (60 * 60))}h ago`;
+  if (diffSeconds < 60 * 60 * 24 * 7)
+    return `${Math.floor(diffSeconds / (60 * 60 * 24))}d ago`;
+  return new Date(createdAtSeconds * 1000).toLocaleDateString();
+}
 
 function isValidEmojiImageUrl(url: string): boolean {
   try {
@@ -654,6 +668,73 @@ async function publishReaction(
   await Promise.allSettled(promises);
 }
 
+async function publishRepost(targetEvent: NostrEvent): Promise<void> {
+  const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
+  if (!storedPubkey) {
+    alert('Sign in to repost.');
+    return;
+  }
+
+  const unsignedEvent: Omit<NostrEvent, 'id' | 'sig'> = {
+    kind: 6,
+    pubkey: storedPubkey as PubkeyHex,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['e', targetEvent.id],
+      ['p', targetEvent.pubkey],
+    ],
+    content: JSON.stringify(targetEvent),
+  };
+
+  let signedEvent: NostrEvent;
+  if ((window as any).nostr?.signEvent) {
+    signedEvent = await (window as any).nostr.signEvent(unsignedEvent);
+  } else {
+    const privateKey: Uint8Array | null = getSessionPrivateKey();
+    if (!privateKey) {
+      alert('Sign in to repost.');
+      return;
+    }
+    signedEvent = finalizeEvent(unsignedEvent, privateKey) as NostrEvent;
+  }
+
+  const relays: string[] = getRelays();
+  const promises = relays.map(async (relayUrl: string): Promise<void> => {
+    try {
+      const socket: WebSocket = createRelayWebSocket(relayUrl);
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          socket.close();
+          resolve();
+        }, 5000);
+
+        socket.onopen = (): void => {
+          socket.send(JSON.stringify(['EVENT', signedEvent]));
+        };
+
+        socket.onmessage = (msg: MessageEvent): void => {
+          const arr: any[] = JSON.parse(msg.data);
+          if (arr[0] === 'OK') {
+            clearTimeout(timeout);
+            socket.close();
+            resolve();
+          }
+        };
+
+        socket.onerror = (): void => {
+          clearTimeout(timeout);
+          socket.close();
+          resolve();
+        };
+      });
+    } catch (e) {
+      console.warn(`Failed to publish repost to ${relayUrl}:`, e);
+    }
+  });
+
+  await Promise.allSettled(promises);
+}
+
 export function renderEvent(
   event: NostrEvent,
   profile: NostrProfile | null,
@@ -670,6 +751,7 @@ export function renderEvent(
   const safeName: string = escapeHtmlAttribute(name);
   const safeNpub: string = escapeHtmlAttribute(npub);
   const createdAt: string = new Date(event.created_at * 1000).toLocaleString();
+  const timeLabel: string = formatEventTimeLabel(event.created_at);
   let eventPermalink: string | null = null;
   try {
     eventPermalink = `/${nip19.neventEncode({ id: event.id })}`;
@@ -677,28 +759,71 @@ export function renderEvent(
     console.warn('Failed to encode nevent for event link:', e);
     eventPermalink = null;
   }
-  const dateHtml: string = eventPermalink
-    ? `<a href="${eventPermalink}" class="text-xs text-gray-500 hover:text-blue-600 transition-colors">🕒 ${createdAt}</a>`
-    : `<div class="text-xs text-gray-500">🕒 ${createdAt}</div>`;
   const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
   const canDeletePost: boolean = Boolean(
     storedPubkey && storedPubkey === event.pubkey,
   );
   const isLoggedIn: boolean = Boolean(storedPubkey);
-  const replyButtonHtml: string = isLoggedIn
-    ? `
-          <button class="reply-event-btn text-blue-500 hover:text-blue-700 transition-colors p-1 rounded" aria-label="Reply to post" title="Reply" data-event-id="${escapeHtmlAttribute(event.id)}" data-event-pubkey="${escapeHtmlAttribute(event.pubkey)}" data-event-author="${safeName}">
-            💬 Reply
-          </button>
-        `
-    : '';
-  const deleteButtonHtml: string = canDeletePost
-    ? `
-          <button class="delete-event-btn text-red-500 hover:text-red-700 transition-colors p-1 rounded" aria-label="Delete post" title="Delete post">
-            🗑️
-          </button>
-        `
-    : '';
+  const actionBtnBase: string =
+    'event-action-btn inline-flex items-center justify-center p-1 rounded transition-colors';
+  const actionBtnDisabled: string = 'opacity-60 cursor-not-allowed';
+
+  const replyButtonTitle: string = isLoggedIn
+    ? 'Reply'
+    : 'Reply (sign-in required)';
+  const replyButtonClasses: string = `${actionBtnBase} reply-event-btn text-blue-600 hover:text-blue-800 hover:bg-blue-50`;
+
+  const repostButtonTitle: string = isLoggedIn
+    ? 'Repost'
+    : 'Repost (sign-in required)';
+  const repostButtonClasses: string = isLoggedIn
+    ? `${actionBtnBase} repost-event-btn text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50`
+    : `${actionBtnBase} repost-event-btn text-gray-400 hover:text-gray-500 ${actionBtnDisabled}`;
+
+  const reactButtonTitle: string = isLoggedIn
+    ? 'React'
+    : 'React (sign-in required)';
+  const reactButtonClasses: string = isLoggedIn
+    ? `${actionBtnBase} react-event-btn text-rose-600 hover:text-rose-800 hover:bg-rose-50`
+    : `${actionBtnBase} react-event-btn text-gray-400 hover:text-gray-500 ${actionBtnDisabled}`;
+
+  const deleteButtonTitle: string = 'Delete post';
+  const deleteButtonClasses: string = `${actionBtnBase} delete-event-btn text-red-600 hover:text-red-800 hover:bg-red-50`;
+
+  const actionBarHtml: string = `
+          <div class="flex items-center gap-1">
+            <button class="${replyButtonClasses}" aria-label="Reply to post" title="${replyButtonTitle}" data-event-id="${escapeHtmlAttribute(event.id)}" data-event-pubkey="${escapeHtmlAttribute(event.pubkey)}" data-event-author="${safeName}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 block" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 12c0 4.418-4.03 8-9 8a9.77 9.77 0 01-3.18-.52L3 20l1.35-3.6A7.76 7.76 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01" />
+              </svg>
+            </button>
+            <button class="${repostButtonClasses}" aria-label="Repost" title="${repostButtonTitle}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 block" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10l-2-2m2 2l-2 2" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 17H7l2 2m-2-2l2-2" />
+              </svg>
+            </button>
+            <button class="${reactButtonClasses}" aria-label="React" title="${reactButtonTitle}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 block" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 000-7.8z" />
+              </svg>
+            </button>
+            ${
+              canDeletePost
+                ? `<button class="${deleteButtonClasses}" aria-label="${deleteButtonTitle}" title="${deleteButtonTitle}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 block" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M10 11v6" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M14 11v6" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 7l1 14h10l1-14" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 7V4h6v3" />
+                    </svg>
+                  </button>`
+                : ''
+            }
+          </div>
+        `;
 
   const contentSource: string = isRepost ? '' : event.content;
   const escapedContentSource: string = escapeHtmlAttribute(contentSource);
@@ -832,7 +957,10 @@ export function renderEvent(
 
   const div: HTMLDivElement = document.createElement('div');
   div.className =
-    'bg-gray-50 border border-gray-200 rounded p-4 shadow event-container';
+    'bg-gray-50 border border-gray-200 rounded p-4 shadow event-container cursor-pointer hover:bg-gray-100/60 transition-colors';
+  // Used by timelines to keep DOM ordering stable without re-rendering.
+  div.dataset.eventId = event.id;
+  div.dataset.createdAt = String(event.created_at);
   div.dataset.pubkey = pubkey;
   if (imageUrls.length > 0) {
     div.dataset.images = JSON.stringify(imageUrls);
@@ -846,29 +974,33 @@ export function renderEvent(
          onerror="this.src='https://placekitten.com/100/100';" />`;
 
   div.innerHTML = `
-			    <div class="flex items-start space-x-4">
-		      <a href="/${safeNpub}" class="flex-shrink-0 hover:opacity-80 transition-opacity">
-		        ${avatarHtml}
-		      </a>
-			      <div class="flex-1 overflow-hidden">
-	        <a href="/${safeNpub}" class="event-username font-semibold text-gray-800 text-sm mb-1 hover:text-blue-600 transition-colors inline-block">👤 ${safeName}</a>
-        ${repostBadgeHtml}
-            <div class="parent-event-container mb-2"></div>
-			        ${contentHtml}
-            <div class="referenced-events-container space-y-2"></div>
-		        <div class="ogp-container"></div>
-            <div class="reactions-container mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
-            <div class="reactions-details mt-2" style="display: none;"></div>
-            <div class="mt-2 flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                    ${dateHtml}
-                    ${replyButtonHtml}
-                </div>
-                ${deleteButtonHtml}
-            </div>
-		      </div>
-		    </div>
-		  `;
+					    <div class="flex items-start space-x-4">
+				      <a href="/${safeNpub}" class="flex-shrink-0 hover:opacity-80 transition-opacity">
+				        ${avatarHtml}
+				      </a>
+				      <div class="flex-1 overflow-x-hidden overflow-y-visible">
+			        <div class="flex items-center gap-2 min-w-0 mb-1">
+			          <a href="/${safeNpub}" class="event-username min-w-0 truncate font-semibold text-gray-800 text-sm hover:text-blue-600 transition-colors">👤 ${safeName}</a>
+			          ${
+                  eventPermalink
+                    ? `<a href="${eventPermalink}" class="flex-none text-xs text-gray-500 hover:text-blue-600 transition-colors" title="${escapeHtmlAttribute(createdAt)}">${escapeHtmlAttribute(timeLabel)}</a>`
+                    : `<span class="flex-none text-xs text-gray-500" title="${escapeHtmlAttribute(createdAt)}">${escapeHtmlAttribute(timeLabel)}</span>`
+                }
+			        </div>
+		        ${repostBadgeHtml}
+              ${eventPermalink ? `<a class="event-permalink" href="${eventPermalink}" aria-hidden="true" tabindex="-1" style="display:none;"></a>` : ''}
+		            <div class="parent-event-container mb-2"></div>
+					        ${contentHtml}
+		            <div class="referenced-events-container space-y-2"></div>
+		            <div class="ogp-container"></div>
+		            <div class="reactions-container mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
+		            <div class="reactions-details mt-2" style="display: none;"></div>
+		            <div class="mt-2 flex items-center justify-between gap-2">
+		              ${actionBarHtml}
+		            </div>
+				      </div>
+				    </div>
+				  `;
   output.appendChild(div);
   if (parentEventId) {
     const parentContainer: HTMLElement | null = div.querySelector(
@@ -886,7 +1018,9 @@ export function renderEvent(
     '.reply-event-btn',
   ) as HTMLButtonElement | null;
   if (replyButton) {
-    replyButton.addEventListener('click', (): void => {
+    replyButton.addEventListener('click', (e: MouseEvent): void => {
+      e.preventDefault();
+      e.stopPropagation();
       // Trigger reply overlay via custom event
       const replyEvent = new CustomEvent('open-reply', {
         detail: {
@@ -900,27 +1034,130 @@ export function renderEvent(
     });
   }
 
+  const repostButton: HTMLButtonElement | null = div.querySelector(
+    '.repost-event-btn',
+  ) as HTMLButtonElement | null;
+  if (repostButton) {
+    repostButton.addEventListener(
+      'click',
+      async (e: MouseEvent): Promise<void> => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!isLoggedIn) {
+          alert('Sign in to repost.');
+          return;
+        }
+        repostButton.disabled = true;
+        repostButton.classList.add('opacity-60', 'cursor-not-allowed');
+        try {
+          await publishRepost(event);
+        } catch (error: unknown) {
+          console.error('Failed to repost:', error);
+          alert('Failed to repost. Please try again.');
+        } finally {
+          repostButton.disabled = false;
+          repostButton.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+      },
+    );
+  }
+
+  const reactButton: HTMLButtonElement | null = div.querySelector(
+    '.react-event-btn',
+  ) as HTMLButtonElement | null;
+  if (reactButton) {
+    reactButton.addEventListener(
+      'click',
+      async (e: MouseEvent): Promise<void> => {
+        e.preventDefault();
+        e.stopPropagation();
+        const reaction: ReactionAggregate = {
+          count: 1,
+          key: 'text:❤',
+          content: '❤',
+        };
+        try {
+          await publishReaction(event.id, event.pubkey, reaction);
+        } catch (error: unknown) {
+          console.error('Failed to react:', error);
+          alert('Failed to react. Please try again.');
+        }
+      },
+    );
+  }
+
   const deleteButton: HTMLButtonElement | null = div.querySelector(
     '.delete-event-btn',
   ) as HTMLButtonElement | null;
   if (deleteButton) {
-    deleteButton.addEventListener('click', async (): Promise<void> => {
-      const confirmed: boolean = window.confirm('Delete this post?');
-      if (!confirmed) {
+    deleteButton.addEventListener(
+      'click',
+      async (e: MouseEvent): Promise<void> => {
+        e.preventDefault();
+        e.stopPropagation();
+        const confirmed: boolean = window.confirm('Delete this post?');
+        if (!confirmed) {
+          return;
+        }
+
+        deleteButton.disabled = true;
+        deleteButton.classList.add('opacity-60', 'cursor-not-allowed');
+
+        try {
+          await deleteEventOnRelays(event);
+          cacheDeletionStatus(event.id, true);
+          const viewerPubkey: PubkeyHex | null =
+            (localStorage.getItem('nostr_pubkey') as PubkeyHex | null) || null;
+          const targets = computeTimelineRemovalTargets({
+            viewerPubkey,
+            authorPubkey: event.pubkey as PubkeyHex,
+          });
+          await deleteEvents([event.id]);
+          await Promise.allSettled(
+            targets.map(async (target) => {
+              if (target.type === 'global') {
+                await removeEventFromTimeline('global', undefined, event.id);
+              } else if (target.type === 'home') {
+                await removeEventFromTimeline('home', target.pubkey, event.id);
+              } else {
+                await removeEventFromTimeline('user', target.pubkey, event.id);
+              }
+            }),
+          );
+          div.remove();
+        } catch (error: unknown) {
+          console.error('Failed to delete event:', error);
+          alert('Failed to delete post. Please try again.');
+          deleteButton.disabled = false;
+          deleteButton.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+      },
+    );
+  }
+
+  // Click anywhere on the card (except interactive elements) to navigate to the event page.
+  if (eventPermalink) {
+    div.addEventListener('click', (e: MouseEvent): void => {
+      const target: HTMLElement | null = e.target as HTMLElement | null;
+      if (!target) {
         return;
       }
-
-      deleteButton.disabled = true;
-      deleteButton.classList.add('opacity-60', 'cursor-not-allowed');
-
-      try {
-        await deleteEventOnRelays(event);
-        div.remove();
-      } catch (error: unknown) {
-        console.error('Failed to delete event:', error);
-        alert('Failed to delete post. Please try again.');
-        deleteButton.disabled = false;
-        deleteButton.classList.remove('opacity-60', 'cursor-not-allowed');
+      if (
+        target.closest('a') ||
+        target.closest('button') ||
+        target.closest('input') ||
+        target.closest('textarea') ||
+        target.closest('select') ||
+        target.closest('.reactions-container') ||
+        target.closest('.reactions-details')
+      ) {
+        return;
+      }
+      const permalinkAnchor: HTMLAnchorElement | null = div.querySelector(
+        '.event-permalink',
+      ) as HTMLAnchorElement | null;
+      if (permalinkAnchor) {
+        permalinkAnchor.click();
       }
     });
   }
@@ -1026,6 +1263,22 @@ function checkDeletionAsync(
     .then((deleted: boolean): void => {
       cacheDeletionStatus(eventId, deleted);
       if (deleted) {
+        const viewerPubkey: PubkeyHex | null =
+          (localStorage.getItem('nostr_pubkey') as PubkeyHex | null) || null;
+        const targets = computeTimelineRemovalTargets({
+          viewerPubkey,
+          authorPubkey,
+        });
+        void deleteEvents([eventId]);
+        targets.forEach((target) => {
+          if (target.type === 'global') {
+            void removeEventFromTimeline('global', undefined, eventId);
+          } else if (target.type === 'home') {
+            void removeEventFromTimeline('home', target.pubkey, eventId);
+          } else {
+            void removeEventFromTimeline('user', target.pubkey, eventId);
+          }
+        });
         cardElement.textContent = deletedMessage;
       }
     })

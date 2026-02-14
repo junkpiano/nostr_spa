@@ -1,5 +1,5 @@
 interface NavigationOptions {
-  handleRoute: () => void;
+  navigateTo: (path: string) => void;
   onLogout: () => void;
 }
 
@@ -36,6 +36,12 @@ export function setActiveNav(
     aboutButton.classList.remove('bg-indigo-100', 'text-indigo-700');
     aboutButton.classList.add('text-gray-700');
   }
+  const reactionsButton: HTMLElement | null =
+    document.getElementById('nav-reactions');
+  if (reactionsButton) {
+    reactionsButton.classList.remove('bg-indigo-100', 'text-indigo-700');
+    reactionsButton.classList.add('text-gray-700');
+  }
 
   if (activeButton) {
     activeButton.classList.remove('text-gray-700');
@@ -49,6 +55,8 @@ export function setupNavigation(options: NavigationOptions): void {
     document.getElementById('nav-global');
   const notificationsButton: HTMLElement | null =
     document.getElementById('nav-notifications');
+  const reactionsButton: HTMLElement | null =
+    document.getElementById('nav-reactions');
   const relaysButton: HTMLElement | null =
     document.getElementById('nav-relays');
   const settingsButton: HTMLElement | null =
@@ -146,8 +154,7 @@ export function setupNavigation(options: NavigationOptions): void {
     homeButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/home');
-        options.handleRoute();
+        options.navigateTo('/home');
       }),
     );
   }
@@ -156,8 +163,7 @@ export function setupNavigation(options: NavigationOptions): void {
     globalButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/global');
-        options.handleRoute();
+        options.navigateTo('/global');
       }),
     );
   }
@@ -166,8 +172,16 @@ export function setupNavigation(options: NavigationOptions): void {
     notificationsButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/notifications');
-        options.handleRoute();
+        options.navigateTo('/notifications');
+      }),
+    );
+  }
+
+  if (reactionsButton) {
+    reactionsButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        options.navigateTo('/reactions');
       }),
     );
   }
@@ -176,8 +190,7 @@ export function setupNavigation(options: NavigationOptions): void {
     relaysButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/relays');
-        options.handleRoute();
+        options.navigateTo('/relays');
       }),
     );
   }
@@ -186,8 +199,7 @@ export function setupNavigation(options: NavigationOptions): void {
     settingsButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/settings');
-        options.handleRoute();
+        options.navigateTo('/settings');
       }),
     );
   }
@@ -196,8 +208,7 @@ export function setupNavigation(options: NavigationOptions): void {
     aboutButton.addEventListener(
       'click',
       wrapNavigationHandler((): void => {
-        window.history.pushState(null, '', '/about');
-        options.handleRoute();
+        options.navigateTo('/about');
       }),
     );
   }
@@ -207,8 +218,7 @@ export function setupNavigation(options: NavigationOptions): void {
       'click',
       wrapNavigationHandler((): void => {
         options.onLogout();
-        window.history.pushState(null, '', '/home');
-        options.handleRoute();
+        options.navigateTo('/home');
       }),
     );
   }

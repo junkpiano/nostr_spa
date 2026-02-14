@@ -76,14 +76,76 @@ export function loadAboutPage(options: AboutPageOptions): void {
         </ul>
       </section>
 
-      <section class="bg-gray-50 border border-gray-200 rounded-lg p-5">
-        <h3 class="text-base font-bold text-gray-900 mb-2">Design Goal</h3>
-        <p>
-          noxtr prioritizes transparency over magic: when something happens on the network, you can
-          usually trace it in the UI. The goal is a client that stays simple enough to trust while
-          still being capable enough for serious Nostr usage.
-        </p>
-      </section>
-    </article>
-  `;
+	      <section class="bg-gray-50 border border-gray-200 rounded-lg p-5">
+	        <h3 class="text-base font-bold text-gray-900 mb-2">Design Goal</h3>
+	        <p>
+	          noxtr prioritizes transparency over magic: when something happens on the network, you can
+	          usually trace it in the UI. The goal is a client that stays simple enough to trust while
+	          still being capable enough for serious Nostr usage.
+	        </p>
+	      </section>
+
+	      <section class="bg-emerald-50 border border-emerald-200 rounded-lg p-5">
+	        <h3 class="text-base font-bold text-emerald-900 mb-2">Donate / Zap</h3>
+	        <p>
+	          If you find noxtr useful, you can support development via Lightning Address:
+	        </p>
+	        <div class="mt-3 flex items-center gap-2 flex-wrap">
+	          <code class="px-2 py-1 bg-white border border-emerald-200 rounded font-mono text-emerald-900 text-xs">
+	            pay@yusuke.cloud
+	          </code>
+	          <button id="copy-zap-address" type="button" class="inline-flex items-center justify-center p-1 rounded text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-400/60" aria-label="Copy Lightning Address" title="Copy">
+	            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 block" aria-hidden="true">
+	              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5h9a2 2 0 012 2v11a2 2 0 01-2 2H9a2 2 0 01-2-2V7a2 2 0 012-2z" />
+	              <path stroke-linecap="round" stroke-linejoin="round" d="M7 19H6a2 2 0 01-2-2V6a2 2 0 012-2h11" />
+	            </svg>
+	          </button>
+	          <span id="copy-zap-status" class="text-xs text-emerald-800"></span>
+	        </div>
+	      </section>
+	    </article>
+	  `;
+
+  const copyZapButton: HTMLButtonElement | null = options.output.querySelector(
+    '#copy-zap-address',
+  ) as HTMLButtonElement | null;
+  const copyZapStatus: HTMLElement | null =
+    options.output.querySelector('#copy-zap-status');
+  const zapAddress: string = 'pay@yusuke.cloud';
+
+  if (copyZapButton) {
+    copyZapButton.addEventListener('click', async (): Promise<void> => {
+      if (copyZapStatus) {
+        copyZapStatus.textContent = '';
+      }
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(zapAddress);
+        } else {
+          const temp: HTMLTextAreaElement = document.createElement('textarea');
+          temp.value = zapAddress;
+          temp.setAttribute('readonly', 'true');
+          temp.style.position = 'fixed';
+          temp.style.left = '-9999px';
+          document.body.appendChild(temp);
+          temp.select();
+          document.execCommand('copy');
+          document.body.removeChild(temp);
+        }
+        if (copyZapStatus) {
+          copyZapStatus.textContent = 'Copied';
+          window.setTimeout((): void => {
+            if (copyZapStatus) {
+              copyZapStatus.textContent = '';
+            }
+          }, 1500);
+        }
+      } catch (error) {
+        console.error('Failed to copy zap address:', error);
+        if (copyZapStatus) {
+          copyZapStatus.textContent = 'Copy failed';
+        }
+      }
+    });
+  }
 }

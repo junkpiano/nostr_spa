@@ -38,6 +38,7 @@ export function setRelays(relayList: string[]): void {
     },
   );
   persistRelayHealth();
+  notifyRelaysUpdated();
 }
 
 export function normalizeRelayUrl(rawUrl: string): string | null {
@@ -76,7 +77,7 @@ export function recordRelayFailure(relayUrl: string): void {
     failure: current.failure + 1,
   });
   persistRelayHealth();
-  notifyRelaysUpdated();
+  notifyRelayHealthUpdated();
 }
 
 export function recordRelaySuccess(relayUrl: string): void {
@@ -91,7 +92,7 @@ export function recordRelaySuccess(relayUrl: string): void {
     failure: current.failure,
   });
   persistRelayHealth();
-  notifyRelaysUpdated();
+  notifyRelayHealthUpdated();
 }
 
 function loadRelaysFromStorage(): string[] {
@@ -159,5 +160,11 @@ function persistRelayHealth(): void {
 function notifyRelaysUpdated(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('relays-updated'));
+  }
+}
+
+function notifyRelayHealthUpdated(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('relay-health-updated'));
   }
 }

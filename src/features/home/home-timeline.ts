@@ -39,12 +39,19 @@ export async function loadHomeTimeline(
   if (!routeIsActive()) {
     return;
   }
+  const hadRenderedEventsAtStart: boolean =
+    output.querySelectorAll('.event-container').length > 0;
   let flushScheduled: boolean = false;
   const _pendingRelays: number = relays.length;
   const bufferedEvents: NostrEvent[] = [];
   const renderedEventIds: Set<string> = new Set();
   let finalized: boolean = false;
-  let clearedPlaceholder: boolean = false;
+  let displayedCachedTimeline: boolean = false;
+  let cachedNewestRenderedTimestamp: number = 0;
+  // If we're paginating ("Load more"), the output already has rendered events.
+  // Never clear it in that case; only clear placeholder/loading content.
+  let clearedPlaceholder: boolean =
+    hadRenderedEventsAtStart;
 
   if (followedPubkeys.length === 0) {
     if (output) {
@@ -66,8 +73,14 @@ export async function loadHomeTimeline(
   if (isInitialLoad && userPubkey) {
     try {
       const cached = await getCachedTimeline('home', userPubkey, { limit: 50 });
+      // The timeline index can drift ahead of the actual stored events (e.g. older SW versions),
+      // so compute cache age from what we can actually render.
+      const renderedNewestTimestamp: number =
+        cached.events.length > 0
+          ? Math.max(...cached.events.map((e) => e.created_at))
+          : cached.newestTimestamp;
       const cacheAgeMinutes = cached.hasCache
-        ? Math.floor((Date.now() / 1000 - cached.newestTimestamp) / 60)
+        ? Math.floor((Date.now() / 1000 - renderedNewestTimestamp) / 60)
         : 0;
 
       // Only use cache if it's less than 30 minutes old (home timeline can be slightly older)
@@ -87,6 +100,8 @@ export async function loadHomeTimeline(
         } else {
           if (!routeIsActive()) return; // Guard before DOM update
           clearedPlaceholder = true;
+          displayedCachedTimeline = true;
+          cachedNewestRenderedTimestamp = renderedNewestTimestamp;
           output.innerHTML = '';
 
           // Render cached events
@@ -135,15 +150,8 @@ export async function loadHomeTimeline(
   }
   // === End cache-first loading ===
 
-  const loadMoreBtn: HTMLElement | null = document.getElementById('load-more');
-
   if (connectingMsg) {
     connectingMsg.style.display = ''; // Show connecting message
-  }
-
-  if (loadMoreBtn) {
-    (loadMoreBtn as HTMLButtonElement).disabled = true;
-    loadMoreBtn.classList.add('opacity-50', 'cursor-not-allowed');
   }
 
   const flushBufferedEvents = (): void => {
@@ -160,7 +168,41 @@ export async function loadHomeTimeline(
       clearedPlaceholder = true;
     }
 
-    bufferedEvents.forEach((event: NostrEvent): void => {
+    const insertRenderedEventSorted = (
+      event: NostrEvent,
+      profile: NostrProfile | null,
+      npubStr: Npub,
+    ): void => {
+      // renderEvent() always appends, so render into a staging node then insert.
+      const staging: HTMLDivElement = document.createElement('div');
+      renderEvent(event, profile, npubStr, event.pubkey, staging);
+      const node: Element | null = staging.firstElementChild;
+      if (!node) {
+        return;
+      }
+
+      // Keep newest-first order by inserting before the first older element.
+      const children: HTMLCollection = output.children;
+      for (let i: number = 0; i < children.length; i += 1) {
+        const el: HTMLElement = children[i] as HTMLElement;
+        if (!el.classList?.contains('event-container')) {
+          continue;
+        }
+        const createdAtRaw: string | undefined = el.dataset.createdAt;
+        const createdAt: number = createdAtRaw ? Number(createdAtRaw) : NaN;
+        if (!Number.isFinite(createdAt)) {
+          continue;
+        }
+        if (createdAt < event.created_at) {
+          output.insertBefore(node, el);
+          return;
+        }
+      }
+
+      output.appendChild(node);
+    };
+
+    const renderOne = (event: NostrEvent): void => {
       if (!routeIsActive()) return; // Guard before each render
       if (renderedEventIds.has(event.id)) {
         return;
@@ -212,8 +254,23 @@ export async function loadHomeTimeline(
       }
 
       const npubStr: Npub = nip19.npubEncode(event.pubkey);
-      renderEvent(event, profile, npubStr, event.pubkey, output);
+      insertRenderedEventSorted(event, profile, npubStr);
+
       untilTimestamp = Math.min(untilTimestamp, event.created_at);
+    };
+
+    bufferedEvents.forEach((event: NostrEvent): void => {
+      // When we displayed a cached timeline, avoid inserting older historical events
+      // above the cache due to out-of-order relay delivery.
+      if (
+        displayedCachedTimeline &&
+        cachedNewestRenderedTimestamp > 0 &&
+        event.created_at <= cachedNewestRenderedTimestamp
+      ) {
+        // Still render it, but sorted insertion will naturally place it below newer items.
+        // This guard is retained for clarity and future logic tweaks.
+      }
+      renderOne(event);
     });
 
     if (connectingMsg && renderedEventIds.size > 0) {
@@ -286,14 +343,6 @@ export async function loadHomeTimeline(
       `;
     }
 
-    if (loadMoreBtn) {
-      (loadMoreBtn as HTMLButtonElement).disabled = false;
-      loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      if (renderedEventIds.size > 0) {
-        loadMoreBtn.style.display = 'inline';
-      }
-    }
-
     if (connectingMsg) {
       connectingMsg.style.display = 'none';
     }
@@ -364,10 +413,6 @@ export async function loadHomeTimeline(
       if (connectingMsg) {
         connectingMsg.style.display = 'none';
       }
-      if (loadMoreBtn) {
-        (loadMoreBtn as HTMLButtonElement).disabled = false;
-        loadMoreBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      }
       // Force finalization on error
       if (!finalized) {
         finalizeLoading();
@@ -387,29 +432,5 @@ export async function loadHomeTimeline(
   // so emissions before subscription are lost
   req.emit(filter);
 
-  if (loadMoreBtn) {
-    // Remove old listeners and add new one
-    const newLoadMoreBtn: HTMLElement = loadMoreBtn.cloneNode(
-      true,
-    ) as HTMLElement;
-    loadMoreBtn.parentNode?.replaceChild(newLoadMoreBtn, loadMoreBtn);
-    newLoadMoreBtn.addEventListener(
-      'click',
-      (): Promise<void> =>
-        loadHomeTimeline(
-          followedPubkeys,
-          kinds,
-          [],
-          limit,
-          untilTimestamp,
-          seenEventIds,
-          output,
-          connectingMsg,
-          [],
-          activeTimeouts,
-          routeIsActive,
-          userPubkey,
-        ),
-    );
-  }
+  // Pagination ("Load more") is currently disabled for stability.
 }
