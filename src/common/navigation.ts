@@ -36,6 +36,12 @@ export function setActiveNav(
     aboutButton.classList.remove('bg-indigo-100', 'text-indigo-700');
     aboutButton.classList.add('text-gray-700');
   }
+  const reactionsButton: HTMLElement | null =
+    document.getElementById('nav-reactions');
+  if (reactionsButton) {
+    reactionsButton.classList.remove('bg-indigo-100', 'text-indigo-700');
+    reactionsButton.classList.add('text-gray-700');
+  }
 
   if (activeButton) {
     activeButton.classList.remove('text-gray-700');
@@ -49,6 +55,8 @@ export function setupNavigation(options: NavigationOptions): void {
     document.getElementById('nav-global');
   const notificationsButton: HTMLElement | null =
     document.getElementById('nav-notifications');
+  const reactionsButton: HTMLElement | null =
+    document.getElementById('nav-reactions');
   const relaysButton: HTMLElement | null =
     document.getElementById('nav-relays');
   const settingsButton: HTMLElement | null =
@@ -165,6 +173,15 @@ export function setupNavigation(options: NavigationOptions): void {
       'click',
       wrapNavigationHandler((): void => {
         options.navigateTo('/notifications');
+      }),
+    );
+  }
+
+  if (reactionsButton) {
+    reactionsButton.addEventListener(
+      'click',
+      wrapNavigationHandler((): void => {
+        options.navigateTo('/reactions');
       }),
     );
   }

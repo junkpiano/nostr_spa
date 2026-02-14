@@ -29,6 +29,7 @@ import {
   clearNotifications,
   loadNotificationsPage,
 } from '../features/notifications/notifications.js';
+import { loadReactionsPage } from '../features/reactions/reactions-page.js';
 import {
   publishEventToRelays,
   setupFollowToggle,
@@ -385,6 +386,11 @@ function handleRoute(scrollRestoreState?: unknown): void {
   if (notificationsButton) {
     notificationsButton.style.display = storedPubkey ? '' : 'none';
   }
+  const reactionsButton: HTMLElement | null =
+    document.getElementById('nav-reactions');
+  if (reactionsButton) {
+    reactionsButton.style.display = storedPubkey ? '' : 'none';
+  }
 
   void (async (): Promise<void> => {
     if (path === '/' || path === '') {
@@ -422,6 +428,43 @@ function handleRoute(scrollRestoreState?: unknown): void {
       }
       await Promise.resolve(
         loadNotificationsPage({ relays, limit: 50, isRouteActive }),
+      );
+    } else if (path === '/reactions') {
+      const homeButton: HTMLElement | null =
+        document.getElementById('nav-home');
+      const globalButton: HTMLElement | null =
+        document.getElementById('nav-global');
+      const relaysButton: HTMLElement | null =
+        document.getElementById('nav-relays');
+      const notificationsButton: HTMLElement | null =
+        document.getElementById('nav-notifications');
+      const reactionsButton: HTMLElement | null =
+        document.getElementById('nav-reactions');
+      const profileLink: HTMLElement | null =
+        document.getElementById('nav-profile');
+      const settingsButton: HTMLElement | null =
+        document.getElementById('nav-settings');
+      setActiveNav(
+        homeButton,
+        globalButton,
+        relaysButton,
+        profileLink,
+        settingsButton,
+        null,
+      );
+      if (notificationsButton) {
+        notificationsButton.classList.remove(
+          'bg-indigo-100',
+          'text-indigo-700',
+        );
+        notificationsButton.classList.add('text-gray-700');
+      }
+      if (reactionsButton) {
+        reactionsButton.classList.remove('text-gray-700');
+        reactionsButton.classList.add('bg-indigo-100', 'text-indigo-700');
+      }
+      await Promise.resolve(
+        loadReactionsPage({ relays, limit: 100, isRouteActive }),
       );
     } else if (path === '/relays') {
       await Promise.resolve(
