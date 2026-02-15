@@ -1,4 +1,6 @@
-export function setupSearchBar(output: HTMLElement | null): void {
+export function setupSearchBar(
+  navigateTo: (path: string) => void,
+): void {
   const searchButton: HTMLElement | null =
     document.getElementById('search-button');
   const clearSearchButton: HTMLElement | null = document.getElementById(
@@ -25,8 +27,8 @@ export function setupSearchBar(output: HTMLElement | null): void {
     const activeInput =
       fromMobile && searchInputMobile ? searchInputMobile : searchInput;
 
-    if (activeInput && output) {
-      const query: string = activeInput.value.trim().toLowerCase();
+    if (activeInput) {
+      const query: string = activeInput.value.trim();
       if (!query) {
         clearSearch();
         return;
@@ -38,24 +40,8 @@ export function setupSearchBar(output: HTMLElement | null): void {
         searchInputMobile.value = query;
       }
 
-      const eventContainers: NodeListOf<HTMLElement> =
-        output.querySelectorAll('.event-container');
-      let matchCount: number = 0;
-
-      eventContainers.forEach((container: HTMLElement): void => {
-        const contentDiv: HTMLElement | null = container.querySelector(
-          '.whitespace-pre-wrap',
-        );
-        if (contentDiv) {
-          const content: string = contentDiv.textContent?.toLowerCase() || '';
-          if (content.includes(query)) {
-            container.style.display = '';
-            matchCount++;
-          } else {
-            container.style.display = 'none';
-          }
-        }
-      });
+      const path: string = `/search?q=${encodeURIComponent(query)}`;
+      navigateTo(path);
 
       if (clearSearchButton) {
         clearSearchButton.style.display = '';
@@ -70,11 +56,6 @@ export function setupSearchBar(output: HTMLElement | null): void {
         searchOverlay.style.display = 'none';
       }
 
-      const postsHeader: HTMLElement | null =
-        document.getElementById('posts-header');
-      if (postsHeader) {
-        postsHeader.textContent = `Search Results (${matchCount})`;
-      }
     }
   }
 
@@ -87,14 +68,6 @@ export function setupSearchBar(output: HTMLElement | null): void {
       searchInputMobile.value = '';
     }
 
-    if (output) {
-      const eventContainers: NodeListOf<HTMLElement> =
-        output.querySelectorAll('.event-container');
-      eventContainers.forEach((container: HTMLElement): void => {
-        container.style.display = '';
-      });
-    }
-
     if (clearSearchButton) {
       clearSearchButton.style.display = 'none';
     }
@@ -103,19 +76,8 @@ export function setupSearchBar(output: HTMLElement | null): void {
       clearSearchButtonMobile.style.display = 'none';
     }
 
-    const postsHeader: HTMLElement | null =
-      document.getElementById('posts-header');
-    if (postsHeader) {
-      const path: string = window.location.pathname;
-      if (path === '/global') {
-        postsHeader.textContent = 'Global Timeline';
-      } else if (path === '/home') {
-        postsHeader.textContent = 'Home Timeline';
-      } else if (path === '/relays') {
-        postsHeader.textContent = 'Relay Management';
-      } else {
-        postsHeader.textContent = 'Posts:';
-      }
+    if (window.location.pathname === '/search') {
+      navigateTo('/home');
     }
   }
 

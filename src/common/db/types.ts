@@ -19,8 +19,8 @@ export const STORE_NAMES = {
 // Storage limits
 export const LIMITS = {
   EVENTS_HARD: 10000,
-  EVENTS_SOFT: 5000,
-  EVENTS_PRUNE_TO: 3000,
+  EVENTS_SOFT: 10000,
+  EVENTS_PRUNE_TO: 10000,
   PROFILES: 1000,
   TIMELINES: 50,
 } as const;

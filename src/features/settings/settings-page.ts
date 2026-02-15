@@ -2,6 +2,11 @@ import {
   clearEventCache,
   getEventCacheStats,
 } from '../../common/event-cache.js';
+import {
+  isTimelineCacheEnabled,
+  setTimelineCacheEnabled,
+} from '../../common/cache-settings.js';
+import { clearTimelines } from '../../common/db/index.js';
 import type { SetActiveNavFn } from '../../common/types.js';
 import {
   clearProfileCache,
@@ -70,6 +75,7 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
   if (options.output) {
     const isEnergySavingEnabled =
       localStorage.getItem('energy_saving_mode') === 'true';
+    const timelineCacheEnabled: boolean = isTimelineCacheEnabled();
 
     options.output.innerHTML = `
       <div class="space-y-6 text-sm">
@@ -87,21 +93,35 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
           </div>
         </div>
 
+        <!-- Timeline Cache Section -->
+        <div class="bg-white border border-gray-200 rounded-lg p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="font-semibold text-gray-900 mb-1">Timeline Cache</h3>
+              <p class="text-xs text-gray-600">Store timeline lists on this device for faster loading</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="timeline-cache-toggle" class="sr-only peer" ${timelineCacheEnabled ? 'checked' : ''}>
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+        </div>
+
         <!-- Cache Section -->
         <div class="text-gray-600">
-          この端末に保存しているデータです。
+          Data stored on this device.
         </div>
         <div class="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
           <div class="text-sm text-gray-800">
-            保存データの合計: <span id="cache-size">計算中...</span>
+            Total stored data: <span id="cache-size">Calculating...</span>
           </div>
           <div class="text-xs text-gray-500 mt-1">
-            投稿: <span id="cache-events">-</span> / プロフィール: <span id="cache-profiles">-</span>
+            Posts: <span id="cache-events">-</span> / Profiles: <span id="cache-profiles">-</span>
           </div>
         </div>
         <button id="cache-clear"
           class="bg-red-100 hover:bg-red-200 text-red-700 font-semibold py-2 px-4 rounded-lg transition-colors w-full sm:w-auto">
-          保存データを削除
+          Delete Stored Data
         </button>
         <p id="cache-status" class="text-xs text-gray-500"></p>
       </div>
@@ -116,6 +136,8 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
   const profilesEl: HTMLElement | null =
     document.getElementById('cache-profiles');
   const statusEl: HTMLElement | null = document.getElementById('cache-status');
+  const timelineCacheToggle: HTMLInputElement | null =
+    document.getElementById('timeline-cache-toggle') as HTMLInputElement | null;
   const clearBtn: HTMLButtonElement | null = document.getElementById(
     'cache-clear',
   ) as HTMLButtonElement | null;
@@ -147,6 +169,28 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
     });
   }
 
+  if (timelineCacheToggle) {
+    timelineCacheToggle.addEventListener('change', async (): Promise<void> => {
+      const isEnabled: boolean = timelineCacheToggle.checked;
+      setTimelineCacheEnabled(isEnabled);
+
+      if (!isEnabled) {
+        await clearTimelines();
+      }
+
+      if (statusEl) {
+        statusEl.textContent = isEnabled
+          ? 'Timeline cache enabled.'
+          : 'Timeline cache disabled.';
+        setTimeout((): void => {
+          if (statusEl) {
+            statusEl.textContent = '';
+          }
+        }, 3000);
+      }
+    });
+  }
+
   const updateStats = async (): Promise<void> => {
     const [eventStats, profileStats] = await Promise.all([
       getEventCacheStats(),
@@ -157,33 +201,37 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
       sizeEl.textContent = formatBytes(totalBytes);
     }
     if (eventsEl) {
-      eventsEl.textContent = `${eventStats.count}件`;
+      eventsEl.textContent = `${eventStats.count}`;
     }
     if (profilesEl) {
-      profilesEl.textContent = `${profileStats.count}件`;
+      profilesEl.textContent = `${profileStats.count}`;
     }
   };
 
   updateStats().catch(() => {
     if (sizeEl) {
-      sizeEl.textContent = '不明';
+      sizeEl.textContent = 'Unknown';
     }
   });
 
   if (clearBtn) {
     clearBtn.addEventListener('click', async (): Promise<void> => {
-      if (!window.confirm('保存データを削除しますか？')) {
+      if (!window.confirm('Delete stored data?')) {
         return;
       }
       clearBtn.disabled = true;
       clearBtn.classList.add('opacity-60', 'cursor-not-allowed');
       if (statusEl) {
-        statusEl.textContent = '削除中...';
+        statusEl.textContent = 'Deleting...';
       }
-      await Promise.all([clearEventCache(), clearProfileCache()]);
+      await Promise.all([
+        clearEventCache(),
+        clearProfileCache(),
+        clearTimelines(),
+      ]);
       await updateStats();
       if (statusEl) {
-        statusEl.textContent = '削除しました。';
+        statusEl.textContent = 'Deleted.';
       }
       clearBtn.disabled = false;
       clearBtn.classList.remove('opacity-60', 'cursor-not-allowed');

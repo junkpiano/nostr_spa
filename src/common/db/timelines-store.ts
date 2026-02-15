@@ -1,4 +1,5 @@
 import type { PubkeyHex } from '../../../types/nostr.js';
+import { isTimelineCacheEnabled } from '../cache-settings.js';
 import {
   createTransaction,
   isIndexedDBAvailable,
@@ -30,7 +31,7 @@ export function getTimelineKey(type: TimelineType, pubkey?: PubkeyHex): string {
  * Stores or updates a timeline
  */
 export async function storeTimeline(timeline: Timeline): Promise<void> {
-  if (!isIndexedDBAvailable()) return;
+  if (!isIndexedDBAvailable() || !isTimelineCacheEnabled()) return;
 
   try {
     const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readwrite');
@@ -52,7 +53,7 @@ export async function getTimeline(
   type: TimelineType,
   pubkey?: PubkeyHex,
 ): Promise<Timeline | null> {
-  if (!isIndexedDBAvailable()) return null;
+  if (!isIndexedDBAvailable() || !isTimelineCacheEnabled()) return null;
 
   try {
     const key = getTimelineKey(type, pubkey);
@@ -79,7 +80,12 @@ export async function prependEventsToTimeline(
   eventIds: string[],
   newestTimestamp: number,
 ): Promise<void> {
-  if (!isIndexedDBAvailable() || eventIds.length === 0) return;
+  if (
+    !isIndexedDBAvailable() ||
+    !isTimelineCacheEnabled() ||
+    eventIds.length === 0
+  )
+    return;
 
   try {
     const key = getTimelineKey(type, pubkey);
@@ -133,7 +139,12 @@ export async function appendEventsToTimeline(
   eventIds: string[],
   oldestTimestamp: number,
 ): Promise<void> {
-  if (!isIndexedDBAvailable() || eventIds.length === 0) return;
+  if (
+    !isIndexedDBAvailable() ||
+    !isTimelineCacheEnabled() ||
+    eventIds.length === 0
+  )
+    return;
 
   try {
     const key = getTimelineKey(type, pubkey);
@@ -186,7 +197,7 @@ export async function removeEventFromTimeline(
   pubkey: PubkeyHex | undefined,
   eventId: string,
 ): Promise<void> {
-  if (!isIndexedDBAvailable()) return;
+  if (!isIndexedDBAvailable() || !isTimelineCacheEnabled()) return;
 
   try {
     const key = getTimelineKey(type, pubkey);
@@ -216,7 +227,7 @@ export async function removeEventFromTimeline(
  * Retrieves all timelines
  */
 export async function getAllTimelines(): Promise<Timeline[]> {
-  if (!isIndexedDBAvailable()) return [];
+  if (!isIndexedDBAvailable() || !isTimelineCacheEnabled()) return [];
 
   try {
     const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readonly');
@@ -249,7 +260,7 @@ export async function getAllTimelines(): Promise<Timeline[]> {
  * Counts total timelines in the store
  */
 export async function countTimelines(): Promise<number> {
-  if (!isIndexedDBAvailable()) return 0;
+  if (!isIndexedDBAvailable() || !isTimelineCacheEnabled()) return 0;
 
   try {
     const tx = await createTransaction(STORE_NAMES.TIMELINES, 'readonly');
@@ -265,7 +276,7 @@ export async function countTimelines(): Promise<number> {
  * Prunes old timelines when limit is exceeded (keeps most recent)
  */
 export async function pruneTimelines(): Promise<number> {
-  if (!isIndexedDBAvailable()) return 0;
+  if (!isIndexedDBAvailable() || !isTimelineCacheEnabled()) return 0;
 
   try {
     const count = await countTimelines();

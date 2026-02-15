@@ -61,6 +61,7 @@ import {
 } from '../features/relays/nip65.js';
 import { loadRelaysPage } from '../features/relays/relays-page.js';
 import { loadSettingsPage } from '../features/settings/settings-page.js';
+import { loadSearchPage } from '../features/search/search-page.js';
 
 const output: HTMLElement | null = document.getElementById('nostr-output');
 const profileSection: HTMLElement | null =
@@ -70,6 +71,10 @@ const composeButton: HTMLElement | null =
 const connectingMsg: HTMLElement | null =
   document.getElementById('connecting-msg');
 let relays: string[] = getRelays();
+const searchRelays: string[] = [
+  'wss://search.nos.today/',
+  'wss://relay.nostr.band/',
+];
 // Fetch a solid chunk up-front; pagination ("Load more") is currently disabled for stability.
 const limit: number = 200;
 const seenEventIds: Set<string> = new Set();
@@ -578,7 +583,11 @@ document.addEventListener('DOMContentLoaded', (): void => {
   }) as EventListener);
 
   // Setup search functionality
-  setupSearchBar(output);
+  setupSearchBar((path: string): void => {
+    saveScrollToHistoryState();
+    pushAppHistoryPath(path);
+    handleRoute();
+  });
 
   // Setup navigation
   setupNavigation({
@@ -686,7 +695,9 @@ window.addEventListener('popstate', (event: PopStateEvent): void => {
 // Router function
 function handleRoute(scrollRestoreState?: unknown): void {
   const isRouteActive: () => boolean = createRouteGuard();
-  const path: string = window.location.pathname;
+  const url: URL = new URL(window.location.href);
+  const path: string = url.pathname;
+  const searchQuery: string = (url.searchParams.get('q') || '').trim();
   updateLogoutButton(composeButton);
   const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
   const notificationsButton: HTMLElement | null =
@@ -709,6 +720,57 @@ function handleRoute(scrollRestoreState?: unknown): void {
       await loadHomePage(isRouteActive, scrollRestoreState);
     } else if (path === '/global') {
       await loadGlobalPage(isRouteActive, scrollRestoreState);
+    } else if (path === '/search') {
+      closeAllWebSockets();
+      if (backgroundFetchInterval) {
+        clearInterval(backgroundFetchInterval);
+        backgroundFetchInterval = null;
+      }
+      const notification = document.getElementById('new-posts-notification');
+      if (notification) {
+        notification.remove();
+      }
+
+      const homeButton: HTMLElement | null =
+        document.getElementById('nav-home');
+      const globalButton: HTMLElement | null =
+        document.getElementById('nav-global');
+      const relaysButton: HTMLElement | null =
+        document.getElementById('nav-relays');
+      const profileLink: HTMLElement | null =
+        document.getElementById('nav-profile');
+      const settingsButton: HTMLElement | null =
+        document.getElementById('nav-settings');
+      setActiveNav(
+        homeButton,
+        globalButton,
+        relaysButton,
+        profileLink,
+        settingsButton,
+        null,
+      );
+
+      if (profileSection) {
+        profileSection.innerHTML = '';
+        profileSection.className = '';
+      }
+
+      if (output) {
+        output.innerHTML = '';
+      }
+
+      await Promise.resolve(
+        loadSearchPage({
+          query: searchQuery,
+          relays: searchRelays,
+          limit: 100,
+          output,
+          connectingMsg,
+          activeWebSockets,
+          activeTimeouts,
+          isRouteActive,
+        }),
+      );
     } else if (path === '/notifications') {
       const homeButton: HTMLElement | null =
         document.getElementById('nav-home');

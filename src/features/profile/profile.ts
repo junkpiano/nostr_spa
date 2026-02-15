@@ -1,5 +1,6 @@
 import type { NostrProfile, Npub, PubkeyHex } from '../../../types/nostr';
 import { createRelayWebSocket } from '../../common/relay-socket.js';
+import { isNip05Identifier, resolveNip05 } from '../../common/nip05.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
 import { recordRelayFailure } from '../relays/relays.js';
 import { getCachedProfile, setCachedProfile } from './profile-cache.js';
@@ -250,6 +251,8 @@ export function renderProfile(
   const rawName: string = getDisplayName(npub, profile);
   const banner: string | undefined = profile?.banner;
   const emojiTags: string[][] = profile?.emojiTags || [];
+  const nip05: string | undefined = profile?.nip05?.trim();
+  const hasNip05: boolean = !!nip05 && isNip05Identifier(nip05);
   const isEnergySavingMode: boolean =
     localStorage.getItem('energy_saving_mode') === 'true';
 
@@ -281,10 +284,32 @@ export function renderProfile(
       ${bannerHtml}
       <div class="relative flex flex-col items-center ${banner && !isEnergySavingMode ? 'py-12 px-4' : 'py-6'}">
         ${avatarHtml}
-        <h2 class="font-bold text-lg ${banner && !isEnergySavingMode ? 'text-white drop-shadow-lg' : 'text-gray-900'}">${nameHtml}</h2>
+        <h2 class="font-bold text-lg ${banner && !isEnergySavingMode ? 'text-white drop-shadow-lg' : 'text-gray-900'} flex items-center gap-1">
+          <span>${nameHtml}</span>
+          <span id="nip05-verified" class="hidden inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px]" aria-label="NIP-05 verified" title="NIP-05 verified">✔</span>
+        </h2>
         ${bioHtml ? `<p class="${banner && !isEnergySavingMode ? 'text-white/90 drop-shadow' : 'text-gray-600'} text-sm mt-1 text-center max-w-2xl break-words px-4 w-full whitespace-pre-wrap">${bioHtml}</p>` : ''}
         <div id="follow-action" class="mt-4"></div>
       </div>
     </div>
   `;
+
+  if (hasNip05 && nip05) {
+    void (async (): Promise<void> => {
+      try {
+        const resolved: PubkeyHex | null = await resolveNip05(nip05);
+        if (resolved !== pubkey) {
+          return;
+        }
+        const icon: HTMLElement | null =
+          profileSection.querySelector('#nip05-verified');
+        if (icon) {
+          icon.classList.remove('hidden');
+          icon.setAttribute('title', `NIP-05 verified: ${nip05}`);
+        }
+      } catch (error: unknown) {
+        console.warn('[Profile] Failed to verify NIP-05:', error);
+      }
+    })();
+  }
 }

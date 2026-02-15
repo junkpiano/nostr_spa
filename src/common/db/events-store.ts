@@ -308,7 +308,7 @@ export async function pruneEvents(): Promise<number> {
     const store = tx.objectStore(STORE_NAMES.EVENTS);
     const index = store.index('storedAt');
 
-    const toDelete = count - LIMITS.EVENTS_PRUNE_TO;
+    const toDelete = count - LIMITS.EVENTS_SOFT;
     let deleted = 0;
 
     return new Promise<number>((resolve, reject) => {

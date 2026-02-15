@@ -1,4 +1,5 @@
 import type { NostrEvent, PubkeyHex } from '../../../types/nostr.js';
+import { isTimelineCacheEnabled } from '../cache-settings.js';
 import { getEvents } from './events-store.js';
 import { getTimeline } from './timelines-store.js';
 import type { TimelineType } from './types.js';
@@ -26,6 +27,15 @@ export async function getCachedTimeline(
       }
     | undefined,
 ): Promise<CachedTimelineResult> {
+  if (!isTimelineCacheEnabled()) {
+    return {
+      events: [],
+      newestTimestamp: 0,
+      oldestTimestamp: 0,
+      hasCache: false,
+    };
+  }
+
   const timeline = await getTimeline(type, pubkey);
 
   if (!timeline || timeline.eventIds.length === 0) {
@@ -66,6 +76,10 @@ export async function getTimelineNewestTimestamp(
   type: TimelineType,
   pubkey?: PubkeyHex,
 ): Promise<number> {
+  if (!isTimelineCacheEnabled()) {
+    return 0;
+  }
+
   const timeline = await getTimeline(type, pubkey);
   return timeline?.newestTimestamp ?? 0;
 }
@@ -77,6 +91,10 @@ export async function getTimelineOldestTimestamp(
   type: TimelineType,
   pubkey?: PubkeyHex,
 ): Promise<number> {
+  if (!isTimelineCacheEnabled()) {
+    return Date.now();
+  }
+
   const timeline = await getTimeline(type, pubkey);
   return timeline?.oldestTimestamp ?? Date.now();
 }
@@ -88,6 +106,10 @@ export async function hasTimelineCache(
   type: TimelineType,
   pubkey?: PubkeyHex,
 ): Promise<boolean> {
+  if (!isTimelineCacheEnabled()) {
+    return false;
+  }
+
   const timeline = await getTimeline(type, pubkey);
   return timeline !== null && timeline.eventIds.length > 0;
 }
@@ -99,6 +121,10 @@ export async function getTimelineCacheSize(
   type: TimelineType,
   pubkey?: PubkeyHex,
 ): Promise<number> {
+  if (!isTimelineCacheEnabled()) {
+    return 0;
+  }
+
   const timeline = await getTimeline(type, pubkey);
   return timeline?.eventIds.length ?? 0;
 }
