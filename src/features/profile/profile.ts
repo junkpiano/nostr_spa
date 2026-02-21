@@ -1,4 +1,6 @@
 import type { NostrProfile, Npub, PubkeyHex } from '../../../types/nostr';
+import { nip19 } from 'nostr-tools';
+import { storeProfile } from '../../common/db/index.js';
 import { createRelayWebSocket } from '../../common/relay-socket.js';
 import { isNip05Identifier, resolveNip05 } from '../../common/nip05.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
@@ -53,7 +55,47 @@ function emojifySegmentToHtml(
   emojiTagMap: Map<string, string>,
 ): string {
   const escaped: string = escapeHtml(segment);
-  return escaped.replace(
+  const withMentionLinks: string = escaped.replace(
+    /(nostr:(?:npub1|nprofile1)[0-9a-z]+)/gi,
+    (profileRef: string): string => {
+      const mentionedProfileId: string = profileRef.replace(/^nostr:/i, '');
+      let profilePathNpub: Npub | null = null;
+      let label: string = `@${mentionedProfileId.slice(0, 12)}...`;
+      try {
+        const decoded = nip19.decode(mentionedProfileId);
+        let pubkey: PubkeyHex | null = null;
+        if (decoded.type === 'npub' && typeof decoded.data === 'string') {
+          pubkey = decoded.data as PubkeyHex;
+          profilePathNpub = mentionedProfileId as Npub;
+        } else if (decoded.type === 'nprofile') {
+          const data: any = decoded.data;
+          const candidate: string | undefined =
+            data?.pubkey || (typeof data === 'string' ? data : undefined);
+          if (candidate) {
+            pubkey = candidate as PubkeyHex;
+            profilePathNpub = nip19.npubEncode(pubkey);
+          }
+        }
+        if (pubkey && profilePathNpub) {
+          const cachedProfile: NostrProfile | null = getCachedProfile(pubkey);
+          const displayName: string = getDisplayName(
+            profilePathNpub,
+            cachedProfile,
+          );
+          label = `@${displayName}`;
+        }
+      } catch {
+        // Ignore invalid mentions and keep the fallback label.
+      }
+      if (!profilePathNpub) {
+        return profileRef;
+      }
+      const safeNpub: string = escapeHtml(profilePathNpub);
+      return `<a href="/${safeNpub}" class="text-indigo-600 underline mention-link" data-mention-npub="${safeNpub}">${escapeHtml(label)}</a>`;
+    },
+  );
+
+  return withMentionLinks.replace(
     /:([a-z0-9_]+):/gi,
     (match: string, code: string): string => {
       const imageUrl: string | undefined = emojiTagMap.get(code.toLowerCase());
@@ -92,6 +134,7 @@ function emojifyAndLinkify(text: string, emojiTags: string[][]): string {
 interface FetchProfileOptions {
   usePersistentCache?: boolean;
   persistProfile?: boolean;
+  forceRefresh?: boolean;
 }
 
 const PROFILE_MEM_CACHE_TTL_MS: number = 5 * 60 * 1000;
@@ -110,23 +153,26 @@ export async function fetchProfile(
 ): Promise<NostrProfile | null> {
   const usePersistentCache: boolean = options.usePersistentCache !== false;
   const persistProfile: boolean = options.persistProfile !== false;
+  const forceRefresh: boolean = options.forceRefresh === true;
   const now: number = Date.now();
 
-  const cachedMem:
-    | { profile: NostrProfile | null; expiresAt: number }
-    | undefined = profileMemoryCache.get(pubkeyHex);
-  if (cachedMem && cachedMem.expiresAt > now) {
-    return cachedMem.profile;
-  }
+  if (!forceRefresh) {
+    const cachedMem:
+      | { profile: NostrProfile | null; expiresAt: number }
+      | undefined = profileMemoryCache.get(pubkeyHex);
+    if (cachedMem && cachedMem.expiresAt > now) {
+      return cachedMem.profile;
+    }
 
-  if (usePersistentCache) {
-    const cachedProfile: NostrProfile | null = getCachedProfile(pubkeyHex);
-    if (cachedProfile) {
-      profileMemoryCache.set(pubkeyHex, {
-        profile: cachedProfile,
-        expiresAt: now + PROFILE_MEM_CACHE_TTL_MS,
-      });
-      return cachedProfile;
+    if (usePersistentCache) {
+      const cachedProfile: NostrProfile | null = getCachedProfile(pubkeyHex);
+      if (cachedProfile) {
+        profileMemoryCache.set(pubkeyHex, {
+          profile: cachedProfile,
+          expiresAt: now + PROFILE_MEM_CACHE_TTL_MS,
+        });
+        return cachedProfile;
+      }
     }
   }
 
@@ -141,7 +187,11 @@ export async function fetchProfile(
   }
 
   const lastAttempt: number | undefined = profileLastAttempt.get(pubkeyHex);
-  if (lastAttempt && now - lastAttempt < PROFILE_RETRY_INTERVAL_MS) {
+  if (
+    !forceRefresh &&
+    lastAttempt &&
+    now - lastAttempt < PROFILE_RETRY_INTERVAL_MS
+  ) {
     return null;
   }
   profileLastAttempt.set(pubkeyHex, now);
@@ -216,6 +266,7 @@ export async function fetchProfile(
             if (persistProfile) {
               setCachedProfile(pubkeyHex, profile);
             }
+            await storeProfile(pubkeyHex, profile);
             profileMemoryCache.set(pubkeyHex, {
               profile,
               expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS,

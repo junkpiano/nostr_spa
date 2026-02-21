@@ -9,7 +9,7 @@ import type {
 } from '../../../types/nostr';
 import {
   appendEventsToTimeline,
-  getProfile as getCachedProfile,
+  getProfile as getCachedDbProfile,
   getCachedTimeline,
   prependEventsToTimeline,
   storeEvents,
@@ -18,6 +18,7 @@ import { renderEvent } from '../../common/event-render.js';
 import { fetchingProfiles, profileCache } from '../../common/timeline-cache.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
 import { fetchProfile } from '../profile/profile.js';
+import { getCachedProfile as getPersistentCachedProfile } from '../profile/profile-cache.js';
 import { getRelays } from '../relays/relays.js';
 import { createBackwardReq, getRxNostr } from '../relays/rx-nostr-client.js';
 
@@ -95,7 +96,12 @@ export async function loadGlobalTimeline(
               if (profileCache.has(event.pubkey)) {
                 profile = profileCache.get(event.pubkey) || null;
               } else {
-                profile = await getCachedProfile(event.pubkey as PubkeyHex);
+                profile = await getCachedDbProfile(event.pubkey as PubkeyHex);
+                if (!profile) {
+                  profile = getPersistentCachedProfile(
+                    event.pubkey as PubkeyHex,
+                  );
+                }
                 if (profile) {
                   profileCache.set(event.pubkey, profile);
                 }
@@ -204,50 +210,65 @@ export async function loadGlobalTimeline(
         connectingMsg.style.display = 'none';
       }
 
-      // Fetch profile for this event's author if not cached
-      const profile: NostrProfile | null =
-        profileCache.get(event.pubkey) || null;
-      if (
-        !profileCache.has(event.pubkey) &&
-        !fetchingProfiles.has(event.pubkey)
-      ) {
+      const updateRenderedProfile = (fetchedProfile: NostrProfile): void => {
+        const eventElements: NodeListOf<Element> =
+          output.querySelectorAll('.event-container');
+        eventElements.forEach((el: Element): void => {
+          if ((el as HTMLElement).dataset.pubkey === event.pubkey) {
+            const nameEl: Element | null = el.querySelector('.event-username');
+            const avatarEl: Element | null = el.querySelector('.event-avatar');
+            if (nameEl) {
+              const npubStr: Npub = nip19.npubEncode(event.pubkey);
+              nameEl.textContent = `👤 ${getDisplayName(npubStr, fetchedProfile)}`;
+            }
+            if (avatarEl) {
+              (avatarEl as HTMLImageElement).src = getAvatarURL(
+                event.pubkey,
+                fetchedProfile,
+              );
+            }
+          }
+        });
+      };
+
+      let profile: NostrProfile | null = profileCache.get(event.pubkey) || null;
+      if (!profileCache.has(event.pubkey)) {
+        const persistentProfile: NostrProfile | null = getPersistentCachedProfile(
+          event.pubkey as PubkeyHex,
+        );
+        if (persistentProfile) {
+          profile = persistentProfile;
+          profileCache.set(event.pubkey, persistentProfile);
+        } else {
+          void getCachedDbProfile(event.pubkey as PubkeyHex).then(
+            (cachedProfile: NostrProfile | null): void => {
+              if (!routeIsActive() || !cachedProfile) return;
+              profileCache.set(event.pubkey, cachedProfile);
+              updateRenderedProfile(cachedProfile);
+            },
+          );
+        }
+      }
+
+      // Revalidate in background so stale cached profile can be updated.
+      if (!fetchingProfiles.has(event.pubkey)) {
         fetchingProfiles.add(event.pubkey);
         fetchProfile(event.pubkey, relays, {
           usePersistentCache: false,
-          persistProfile: false,
+          persistProfile: true,
+          forceRefresh: true,
         })
           .then((fetchedProfile: NostrProfile | null): void => {
             if (!routeIsActive()) return;
-            profileCache.set(event.pubkey, fetchedProfile);
             fetchingProfiles.delete(event.pubkey);
-
-            // Update rendered event with fetched profile
-            const eventElements: NodeListOf<Element> =
-              output.querySelectorAll('.event-container');
-            eventElements.forEach((el: Element): void => {
-              if ((el as HTMLElement).dataset.pubkey === event.pubkey) {
-                const nameEl: Element | null =
-                  el.querySelector('.event-username');
-                const avatarEl: Element | null =
-                  el.querySelector('.event-avatar');
-                if (fetchedProfile) {
-                  if (nameEl) {
-                    const npubStr: Npub = nip19.npubEncode(event.pubkey);
-                    nameEl.textContent = `👤 ${getDisplayName(npubStr, fetchedProfile)}`;
-                  }
-                  if (avatarEl) {
-                    (avatarEl as HTMLImageElement).src = getAvatarURL(
-                      event.pubkey,
-                      fetchedProfile,
-                    );
-                  }
-                }
-              }
-            });
+            if (!fetchedProfile) {
+              return;
+            }
+            profileCache.set(event.pubkey, fetchedProfile);
+            updateRenderedProfile(fetchedProfile);
           })
           .catch((err: unknown): void => {
             console.error(`Failed to fetch profile for ${event.pubkey}`, err);
-            profileCache.set(event.pubkey, null);
             fetchingProfiles.delete(event.pubkey);
           });
       }

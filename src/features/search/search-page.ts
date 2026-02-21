@@ -5,12 +5,13 @@ import type {
   Npub,
   PubkeyHex,
 } from '../../../types/nostr';
-import { getProfile as getCachedProfile } from '../../common/db/index.js';
+import { getProfile as getCachedDbProfile } from '../../common/db/index.js';
 import { renderEvent } from '../../common/event-render.js';
 import { createRelayWebSocket } from '../../common/relay-socket.js';
 import { fetchingProfiles, profileCache } from '../../common/timeline-cache.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
 import { fetchProfile } from '../profile/profile.js';
+import { getCachedProfile as getPersistentCachedProfile } from '../profile/profile-cache.js';
 
 export interface SearchPageOptions {
   query: string;
@@ -218,34 +219,41 @@ export async function loadSearchPage(options: SearchPageOptions): Promise<void> 
           let profile: NostrProfile | null =
             profileCache.get(event.pubkey) || null;
           if (!profileCache.has(event.pubkey)) {
-            void getCachedProfile(event.pubkey as PubkeyHex).then(
-              (cached: NostrProfile | null): void => {
-                if (!routeIsActive()) return;
-                profileCache.set(event.pubkey, cached);
-                if (cached) {
+            const persistentProfile: NostrProfile | null = getPersistentCachedProfile(
+              event.pubkey as PubkeyHex,
+            );
+            if (persistentProfile) {
+              profile = persistentProfile;
+              profileCache.set(event.pubkey, persistentProfile);
+            } else {
+              void getCachedDbProfile(event.pubkey as PubkeyHex).then(
+                (cached: NostrProfile | null): void => {
+                  if (!routeIsActive() || !cached) return;
+                  profileCache.set(event.pubkey, cached);
                   updateRenderedProfile(
                     output,
                     event.pubkey as PubkeyHex,
                     cached,
                   );
-                }
-              },
-            );
+                },
+              );
+            }
           }
 
-          if (
-            !profileCache.has(event.pubkey) &&
-            !fetchingProfiles.has(event.pubkey)
-          ) {
+          if (!fetchingProfiles.has(event.pubkey)) {
             fetchingProfiles.add(event.pubkey);
             fetchProfile(event.pubkey, relays, {
               usePersistentCache: false,
-              persistProfile: false,
+              persistProfile: true,
+              forceRefresh: true,
             })
               .then((fetchedProfile: NostrProfile | null): void => {
                 if (!routeIsActive()) return;
-                profileCache.set(event.pubkey, fetchedProfile);
                 fetchingProfiles.delete(event.pubkey);
+                if (!fetchedProfile) {
+                  return;
+                }
+                profileCache.set(event.pubkey, fetchedProfile);
                 updateRenderedProfile(
                   output,
                   event.pubkey as PubkeyHex,
@@ -257,7 +265,6 @@ export async function loadSearchPage(options: SearchPageOptions): Promise<void> 
                   `[Search] Failed to fetch profile for ${event.pubkey}`,
                   error,
                 );
-                profileCache.set(event.pubkey, null);
                 fetchingProfiles.delete(event.pubkey);
               });
           }

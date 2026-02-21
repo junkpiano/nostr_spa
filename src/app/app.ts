@@ -9,7 +9,7 @@ import { setupComposeOverlay } from '../common/compose.js';
 import {
   deleteTimeline,
   getCachedTimeline,
-  getProfile as getCachedProfile,
+  getProfile as getCachedDbProfile,
   getTimelineNewestTimestamp,
 } from '../common/db/index.js';
 import { renderEvent } from '../common/event-render.js';
@@ -45,6 +45,7 @@ import {
   publishEventToRelays,
   setupFollowToggle,
 } from '../features/profile/follow.js';
+import { getCachedProfile as getPersistentCachedProfile } from '../features/profile/profile-cache.js';
 import { fetchProfile, renderProfile } from '../features/profile/profile.js';
 import { loadEvents } from '../features/profile/profile-events.js';
 import {
@@ -337,9 +338,15 @@ async function restoreTimelineFromCache(params: {
   const profiles: Array<NostrProfile | null> = await Promise.all(
     uniquePubkeys.map(async (pk: PubkeyHex): Promise<NostrProfile | null> => {
       try {
-        return await getCachedProfile(pk);
+        const cachedDbProfile: NostrProfile | null = await getCachedDbProfile(
+          pk,
+        );
+        if (cachedDbProfile) {
+          return cachedDbProfile;
+        }
+        return getPersistentCachedProfile(pk);
       } catch {
-        return null;
+        return getPersistentCachedProfile(pk);
       }
     }),
   );
