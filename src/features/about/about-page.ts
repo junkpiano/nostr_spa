@@ -76,7 +76,21 @@ export function loadAboutPage(options: AboutPageOptions): void {
         </ul>
       </section>
 
-	      <section class="bg-gray-50 border border-gray-200 rounded-lg p-5">
+      <section class="bg-sky-50 border border-sky-200 rounded-lg p-5">
+        <h3 class="text-base font-bold text-sky-900 mb-3">Supported NIPs</h3>
+        <p class="mb-2 text-xs text-sky-800">
+          Based on implemented features in recent git history.
+        </p>
+        <ul class="space-y-2 list-disc list-inside">
+          <li><span class="font-semibold">NIP-05:</span> identifier resolution for profiles (e.g. user@domain.com).</li>
+          <li><span class="font-semibold">NIP-07:</span> browser extension signing/auth flow support.</li>
+          <li><span class="font-semibold">NIP-30:</span> custom emoji tags in posts, reactions, and profile metadata.</li>
+          <li><span class="font-semibold">NIP-36:</span> content warning tags with hide/reveal behavior.</li>
+          <li><span class="font-semibold">NIP-65:</span> relay list import/publish for kind 10002 relay metadata.</li>
+        </ul>
+      </section>
+
+      <section class="bg-gray-50 border border-gray-200 rounded-lg p-5">
 	        <h3 class="text-base font-bold text-gray-900 mb-2">Design Goal</h3>
 	        <p>
 	          noxtr prioritizes transparency over magic: when something happens on the network, you can
