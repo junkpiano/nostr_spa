@@ -7,7 +7,7 @@ interface ProfileCacheStore {
 }
 
 const PROFILE_CACHE_KEY: string = 'nostr_profile_cache_v1';
-const PROFILE_CACHE_LIMIT: number = 1000;
+export const PROFILE_CACHE_LIMIT: number = 1000;
 
 function readStore(): ProfileCacheStore {
   try {

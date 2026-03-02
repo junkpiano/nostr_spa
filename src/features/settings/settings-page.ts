@@ -1,4 +1,5 @@
 import {
+  EVENT_CACHE_LIMIT,
   clearEventCache,
   getEventCacheStats,
 } from '../../common/event-cache.js';
@@ -14,6 +15,7 @@ import {
 import type { SetActiveNavFn } from '../../common/types.js';
 import {
   clearProfileCache,
+  PROFILE_CACHE_LIMIT,
   getProfileCacheStats,
 } from '../profile/profile-cache.js';
 
@@ -120,7 +122,7 @@ export function loadSettingsPage(options: SettingsPageOptions): void {
             Total stored data: <span id="cache-size">Calculating...</span>
           </div>
           <div class="text-xs text-gray-500 mt-1">
-            Posts: <span id="cache-events">-</span> / Profiles: <span id="cache-profiles">-</span>
+            Posts: <span id="cache-events">-</span> / ${EVENT_CACHE_LIMIT} · Profiles: <span id="cache-profiles">-</span> / ${PROFILE_CACHE_LIMIT}
           </div>
         </div>
         <button id="cache-clear"

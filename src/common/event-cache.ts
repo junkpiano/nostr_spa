@@ -4,7 +4,7 @@ import { isTimelineCacheEnabled } from './cache-settings.js';
 const DB_NAME: string = 'nostr_event_cache_v1';
 const DB_VERSION: number = 1;
 const STORE_NAME: string = 'events';
-const MAX_EVENTS: number = 1000;
+export const EVENT_CACHE_LIMIT: number = 1000;
 const TTL_MS: number = 7 * 24 * 60 * 60 * 1000;
 
 interface CachedEventRecord {
@@ -50,12 +50,12 @@ async function pruneStore(db: IDBDatabase): Promise<void> {
   const tx: IDBTransaction = db.transaction(STORE_NAME, 'readwrite');
   const store: IDBObjectStore = tx.objectStore(STORE_NAME);
   const count: number = await requestToPromise<number>(store.count());
-  if (count <= MAX_EVENTS) {
+  if (count <= EVENT_CACHE_LIMIT) {
     return;
   }
 
   const index: IDBIndex = store.index('storedAt');
-  let remainingToDelete: number = count - MAX_EVENTS;
+  let remainingToDelete: number = count - EVENT_CACHE_LIMIT;
 
   await new Promise<void>((resolve, reject) => {
     const cursorRequest: IDBRequest<IDBCursorWithValue | null> =
