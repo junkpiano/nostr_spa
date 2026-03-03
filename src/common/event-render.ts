@@ -7,7 +7,7 @@ import type {
   PubkeyHex,
 } from '../../types/nostr';
 import { fetchProfile } from '../features/profile/profile.js';
-import { getRelays } from '../features/relays/relays.js';
+import { getRelays, normalizeRelayUrl } from '../features/relays/relays.js';
 import {
   fetchOGP,
   getAvatarURL,
@@ -15,9 +15,9 @@ import {
   isTwitterURL,
   replaceEmojiShortcodes,
 } from '../utils/utils.js';
-import { getCachedEvent, setCachedEvent } from './event-cache.js';
 import { deleteEvents, removeEventFromTimeline } from './db/index.js';
 import { computeTimelineRemovalTargets } from './deletion-targets.js';
+import { getCachedEvent, setCachedEvent } from './event-cache.js';
 import {
   cacheDeletionStatus,
   fetchEventById,
@@ -28,7 +28,10 @@ import { createRelayWebSocket } from './relay-socket.js';
 import { getSessionPrivateKey } from './session.js';
 
 const REFERENCED_EVENT_CACHE_LIMIT: number = 1000;
+const REFERENCED_EVENT_NULL_CACHE_LIMIT: number = 2000;
+const REFERENCED_EVENT_NULL_CACHE_TTL_MS: number = 60 * 1000;
 const referencedEventCache: Map<string, Promise<NostrEvent | null>> = new Map();
+const referencedEventNullCache: Map<string, number> = new Map();
 interface ReactionAggregate {
   count: number;
   key: string;
@@ -40,6 +43,11 @@ interface ReactionAggregate {
 interface ContentWarningInfo {
   hasWarning: boolean;
   reason: string;
+}
+
+interface ParentReference {
+  eventId: string;
+  relayHints: string[];
 }
 
 const reactionCache: Map<
@@ -207,10 +215,42 @@ function setReferencedEventCache(
   }
 }
 
+function setReferencedEventNullCache(eventId: string): void {
+  referencedEventNullCache.delete(eventId);
+  referencedEventNullCache.set(
+    eventId,
+    Date.now() + REFERENCED_EVENT_NULL_CACHE_TTL_MS,
+  );
+  if (referencedEventNullCache.size > REFERENCED_EVENT_NULL_CACHE_LIMIT) {
+    const oldestKey: string | undefined = referencedEventNullCache
+      .keys()
+      .next().value;
+    if (oldestKey) {
+      referencedEventNullCache.delete(oldestKey);
+    }
+  }
+}
+
+function isReferencedEventNullCached(eventId: string): boolean {
+  const expiresAt: number | undefined = referencedEventNullCache.get(eventId);
+  if (!expiresAt) {
+    return false;
+  }
+  if (expiresAt <= Date.now()) {
+    referencedEventNullCache.delete(eventId);
+    return false;
+  }
+  return true;
+}
+
 async function fetchEventByIdCached(
   eventId: string,
   relays: string[],
 ): Promise<NostrEvent | null> {
+  if (isReferencedEventNullCached(eventId)) {
+    return null;
+  }
+
   const cached: Promise<NostrEvent | null> | undefined =
     referencedEventCache.get(eventId);
   if (cached) {
@@ -222,14 +262,17 @@ async function fetchEventByIdCached(
     (async (): Promise<NostrEvent | null> => {
       const cachedEvent: NostrEvent | null = await getCachedEvent(eventId);
       if (cachedEvent) {
+        referencedEventNullCache.delete(eventId);
         return cachedEvent;
       }
       const event: NostrEvent | null = await fetchEventById(eventId, relays);
       if (event) {
+        referencedEventNullCache.delete(eventId);
         await setCachedEvent(event);
         return event;
       }
       referencedEventCache.delete(eventId);
+      setReferencedEventNullCache(eventId);
       return null;
     })();
   setReferencedEventCache(eventId, request);
@@ -454,6 +497,89 @@ function resolveParentAuthorPubkey(event: NostrEvent): PubkeyHex | null {
   return (pTags[0]?.[1] as PubkeyHex) || null;
 }
 
+export function getTagMarker(tag: string[]): string {
+  return (tag[3] || '').trim().toLowerCase();
+}
+
+function getTagRelayHints(tag: string[]): string[] {
+  const relayHint: string = (tag[2] || '').trim();
+  if (!relayHint) {
+    return [];
+  }
+  const normalizedRelayHint: string | null = normalizeRelayUrl(relayHint);
+  if (!normalizedRelayHint) {
+    return [];
+  }
+  return [normalizedRelayHint];
+}
+
+function collectRelayHintsForParent(
+  eTags: string[][],
+  _parentEventId: string,
+  primaryTag: string[] | undefined,
+): string[] {
+  const seen = new Set<string>();
+  const hints: string[] = [];
+
+  const addHintsFromTag = (tag: string[] | undefined): void => {
+    if (!tag) return;
+    for (const hint of getTagRelayHints(tag)) {
+      if (!seen.has(hint)) {
+        seen.add(hint);
+        hints.push(hint);
+      }
+    }
+  };
+
+  addHintsFromTag(primaryTag);
+  for (const tag of eTags) {
+    addHintsFromTag(tag);
+  }
+  return hints;
+}
+
+function normalizeRelayList(relays: string[]): string[] {
+  const seen = new Set<string>();
+  const normalizedRelays: string[] = [];
+  for (const relayUrl of relays) {
+    const normalizedRelay: string | null = normalizeRelayUrl(relayUrl);
+    if (!normalizedRelay || seen.has(normalizedRelay)) {
+      continue;
+    }
+    seen.add(normalizedRelay);
+    normalizedRelays.push(normalizedRelay);
+  }
+  return normalizedRelays;
+}
+
+function filterRelaysToUserList(
+  candidateRelays: string[],
+  userRelays: string[],
+): string[] {
+  const normalizedUserRelays: string[] = normalizeRelayList(userRelays);
+  if (candidateRelays.length === 0) {
+    return normalizedUserRelays;
+  }
+  const userRelaySet: Set<string> = new Set(normalizedUserRelays);
+  return normalizeRelayList(candidateRelays).filter((relayUrl: string): boolean =>
+    userRelaySet.has(relayUrl),
+  );
+}
+
+function mergeRelays(
+  primaryRelays: string[],
+  fallbackRelays: string[],
+): string[] {
+  const normalizedFallbackRelays: string[] = normalizeRelayList(fallbackRelays);
+  const allowedPrimaryRelays: string[] = filterRelaysToUserList(
+    primaryRelays,
+    normalizedFallbackRelays,
+  );
+  return Array.from(
+    new Set([...allowedPrimaryRelays, ...normalizedFallbackRelays]),
+  );
+}
+
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -470,6 +596,9 @@ async function fetchEventWithRetry(
     );
     if (event) {
       return event;
+    }
+    if (isReferencedEventNullCached(eventId)) {
+      return null;
     }
     if (i < attempts - 1) {
       await delay(800 + i * 600);
@@ -795,6 +924,46 @@ async function publishRepost(targetEvent: NostrEvent): Promise<void> {
   await Promise.allSettled(promises);
 }
 
+function renderReplyBadge(
+  parentEventId: string,
+  parentAuthorPubkey: PubkeyHex | null,
+  container: HTMLElement,
+): void {
+  const parentPath = `/${nip19.neventEncode({ id: parentEventId })}`;
+
+  if (parentAuthorPubkey) {
+    const parentNpub = nip19.npubEncode(parentAuthorPubkey);
+    const shortName = `@${parentNpub.slice(0, 12)}...`;
+    container.innerHTML = `
+      <div class="flex items-center gap-1 text-xs text-gray-500">
+        <a href="${escapeHtmlAttribute(parentPath)}" class="flex items-center gap-1 text-gray-400 hover:text-gray-600">
+          <span>↩</span><span>replying to</span>
+        </a>
+        <a href="/${escapeHtmlAttribute(parentNpub)}"
+           class="reply-badge-username text-indigo-500 hover:underline font-medium"
+           data-pubkey="${escapeHtmlAttribute(parentAuthorPubkey)}">
+          ${escapeHtmlAttribute(shortName)}
+        </a>
+      </div>`;
+
+    void fetchProfile(parentAuthorPubkey, getRelays()).then(
+      (profile: NostrProfile | null): void => {
+        const nameEl = container.querySelector('.reply-badge-username');
+        if (nameEl) {
+          nameEl.textContent = `@${getDisplayName(parentNpub as Npub, profile)}`;
+        }
+      },
+    );
+  } else {
+    container.innerHTML = `
+      <div class="flex items-center gap-1 text-xs text-gray-400">
+        <a href="${escapeHtmlAttribute(parentPath)}" class="flex items-center gap-1 hover:text-gray-600">
+          <span>↩</span><span>reply</span>
+        </a>
+      </div>`;
+  }
+}
+
 export function renderEvent(
   event: NostrEvent,
   profile: NostrProfile | null,
@@ -937,9 +1106,10 @@ export function renderEvent(
         .filter((value: string | undefined): value is string => Boolean(value)),
     ),
   );
-  const parentEventId: string | null = isRepost
+  const parentReference: ParentReference | null = isRepost
     ? null
-    : resolveParentEventId(event);
+    : resolveParentReference(event);
+  const parentEventId: string | null = parentReference?.eventId || null;
   const parentAuthorPubkey: PubkeyHex | null = parentEventId
     ? resolveParentAuthorPubkey(event)
     : null;
@@ -1072,7 +1242,7 @@ export function renderEvent(
 			        </div>
 		        ${repostBadgeHtml}
               ${eventPermalink ? `<a class="event-permalink" href="${eventPermalink}" aria-hidden="true" tabindex="-1" style="display:none;"></a>` : ''}
-		            <div class="parent-event-container mb-2"></div>
+		            <div class="reply-badge-container mb-1.5"></div>
                   ${contentAreaHtml}
 		            <div class="reactions-container mt-2 flex flex-wrap gap-2 text-xs text-gray-600"></div>
 		            <div class="reactions-details mt-2" style="display: none;"></div>
@@ -1106,10 +1276,10 @@ export function renderEvent(
   }
   if (parentEventId) {
     const parentContainer: HTMLElement | null = div.querySelector(
-      '.parent-event-container',
+      '.reply-badge-container',
     );
     if (parentContainer) {
-      renderParentEventCard(parentEventId, parentAuthorPubkey, parentContainer);
+      renderReplyBadge(parentEventId, parentAuthorPubkey, parentContainer);
     }
   }
   if (mentionNpubToPubkey.size > 0) {
@@ -1326,7 +1496,7 @@ function resolveRepostEventId(event: NostrEvent): string | null {
   return eTag?.[1] || null;
 }
 
-function resolveParentEventId(event: NostrEvent): string | null {
+function resolveParentReference(event: NostrEvent): ParentReference | null {
   const eTags: string[][] = event.tags.filter(
     (tag: string[]): boolean => tag[0] === 'e' && Boolean(tag[1]),
   );
@@ -1335,20 +1505,42 @@ function resolveParentEventId(event: NostrEvent): string | null {
   }
 
   const replyTag: string[] | undefined = eTags.find(
-    (tag: string[]): boolean => tag[3] === 'reply',
+    (tag: string[]): boolean => getTagMarker(tag) === 'reply',
   );
   if (replyTag?.[1]) {
-    return replyTag[1];
+    return {
+      eventId: replyTag[1],
+      relayHints: collectRelayHintsForParent(eTags, replyTag[1], replyTag),
+    };
   }
 
   const rootTag: string[] | undefined = eTags.find(
-    (tag: string[]): boolean => tag[3] === 'root',
+    (tag: string[]): boolean => getTagMarker(tag) === 'root',
   );
   if (rootTag?.[1]) {
-    return rootTag[1];
+    return {
+      eventId: rootTag[1],
+      relayHints: collectRelayHintsForParent(eTags, rootTag[1], rootTag),
+    };
   }
 
-  return eTags[eTags.length - 1]?.[1] || null;
+  const legacyParentTags: string[][] = eTags.filter(
+    (tag: string[]): boolean => getTagMarker(tag) === '',
+  );
+  const fallbackTag: string[] | undefined =
+    legacyParentTags[legacyParentTags.length - 1];
+  if (fallbackTag?.[1]) {
+    return {
+      eventId: fallbackTag[1],
+      relayHints: collectRelayHintsForParent(
+        legacyParentTags,
+        fallbackTag[1],
+        fallbackTag,
+      ),
+    };
+  }
+
+  return null;
 }
 
 function checkDeletionAsync(
@@ -1390,109 +1582,6 @@ function checkDeletionAsync(
       console.warn(`Failed to check deletion status for ${eventId}:`, err);
       cacheDeletionStatus(eventId, false);
     });
-}
-
-async function renderParentEventCard(
-  parentEventId: string,
-  parentAuthorPubkey: PubkeyHex | null,
-  container: HTMLElement,
-): Promise<void> {
-  container.innerHTML = '';
-  const card: HTMLDivElement = document.createElement('div');
-  card.className = 'border border-amber-200 bg-amber-50 rounded-lg p-3';
-  card.textContent = 'Loading parent post...';
-  container.appendChild(card);
-
-  try {
-    const relays: string[] = getRelays();
-    if (parentAuthorPubkey) {
-      const cachedStatus: boolean | undefined =
-        getCachedDeletionStatus(parentEventId);
-      if (cachedStatus === true) {
-        card.textContent = 'Parent post was deleted.';
-        return;
-      }
-      if (cachedStatus === undefined) {
-        checkDeletionAsync(
-          parentEventId,
-          parentAuthorPubkey,
-          relays,
-          card,
-          'Parent post was deleted.',
-        );
-      }
-    }
-
-    const parentEvent: NostrEvent | null = await fetchEventWithRetry(
-      parentEventId,
-      relays,
-      3,
-    );
-    if (!parentEvent) {
-      card.textContent = 'Failed to load parent post.';
-      return;
-    }
-
-    const parentProfile: NostrProfile | null = await fetchProfile(
-      parentEvent.pubkey,
-      relays,
-    );
-    const parentNpub: Npub = nip19.npubEncode(parentEvent.pubkey);
-    const parentName: string = getDisplayName(parentNpub, parentProfile);
-    const parentAvatar: string = getAvatarURL(
-      parentEvent.pubkey,
-      parentProfile,
-    );
-    const parentContentWithUnicodeEmoji: string = replaceEmojiShortcodes(
-      escapeHtmlAttribute(parentEvent.content),
-    );
-    const parentContent: string = replaceCustomEmojiShortcodes(
-      parentContentWithUnicodeEmoji,
-      parentEvent.tags,
-    );
-    const parentContentWarning: ContentWarningInfo =
-      getContentWarningInfo(parentEvent);
-    const preview: string =
-      parentContent.length > 220
-        ? `${parentContent.slice(0, 220)}...`
-        : parentContent;
-    const parentPath: string = `/${nip19.neventEncode({ id: parentEvent.id })}`;
-    const safeParentPath: string = escapeHtmlAttribute(parentPath);
-    const safeParentName: string = escapeHtmlAttribute(parentName);
-
-    const isEnergySavingMode: boolean =
-      localStorage.getItem('energy_saving_mode') === 'true';
-    const safeParentAvatar: string =
-      normalizeHttpUrl(parentAvatar) || 'https://placekitten.com/80/80';
-    const parentAvatarHtml: string = isEnergySavingMode
-      ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
-      : `<img
-          src="${escapeHtmlAttribute(safeParentAvatar)}"
-          alt="${safeParentName}"
-          class="w-8 h-8 rounded-full object-cover flex-shrink-0"
-          onerror="this.src='https://placekitten.com/80/80';"
-        />`;
-
-    const parentPreviewHtml: string = parentContentWarning.hasWarning
-      ? `<div class="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900">${getContentWarningSummary(parentContentWarning.reason)}. Open post to view.</div>`
-      : `<div class="text-sm text-gray-800 whitespace-pre-wrap break-words">${preview || '(no content)'}</div>`;
-
-    card.innerHTML = `
-      <a href="${safeParentPath}" class="block hover:bg-amber-100 rounded transition-colors p-1">
-        <div class="text-xs text-amber-700 font-semibold mb-1">Replying to</div>
-        <div class="flex items-start gap-2">
-          ${parentAvatarHtml}
-          <div class="min-w-0">
-            <div class="text-xs text-gray-700 font-semibold mb-1 truncate">${safeParentName}</div>
-            ${parentPreviewHtml}
-          </div>
-        </div>
-      </a>
-    `;
-  } catch (error: unknown) {
-    console.warn('Failed to render parent event card:', error);
-    card.textContent = 'Failed to load parent post.';
-  }
 }
 
 async function enrichMentionDisplayNames(
@@ -1607,7 +1696,7 @@ async function renderReferencedEventCards(
   eventRefs: string[],
   container: HTMLElement,
 ): Promise<void> {
-  const currentRelays: string[] = getRelays();
+  const currentRelays: string[] = normalizeRelayList(getRelays());
   const maxCards: number = 3;
 
   for (const eventRef of eventRefs.slice(0, maxCards)) {
@@ -1624,7 +1713,13 @@ async function renderReferencedEventCards(
       if (decoded.type === 'nevent') {
         const data: any = decoded.data;
         eventId = data?.id || (typeof data === 'string' ? data : undefined);
-        relayHints = Array.isArray(data?.relays) ? data.relays : [];
+        relayHints = Array.isArray(data?.relays)
+          ? normalizeRelayList(
+              data.relays.filter(
+                (value: unknown): value is string => typeof value === 'string',
+              ),
+            )
+          : [];
         if (data?.author && typeof data.author === 'string') {
           referencedAuthorPubkey = data.author as PubkeyHex;
         }
@@ -1640,8 +1735,14 @@ async function renderReferencedEventCards(
         continue;
       }
 
-      const relaysToUse: string[] =
-        relayHints.length > 0 ? relayHints : currentRelays;
+      const relaysToUse: string[] = filterRelaysToUserList(
+        relayHints.length > 0 ? relayHints : currentRelays,
+        currentRelays,
+      );
+      if (relaysToUse.length === 0) {
+        card.textContent = 'Referenced event is not on your relay list.';
+        continue;
+      }
       if (referencedAuthorPubkey) {
         const cachedStatus: boolean | undefined =
           getCachedDeletionStatus(eventId);

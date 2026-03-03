@@ -10,9 +10,11 @@ import {
   getProfile as getCachedProfile,
 } from '../../common/db/index.js';
 import {
+  getTagMarker,
   loadReactionsForEvent,
   renderEvent,
 } from '../../common/event-render.js';
+import { setCachedEvent } from '../../common/event-cache.js';
 import {
   fetchEventById,
   fetchRepliesForEvent,
@@ -22,6 +24,7 @@ import { setEventMeta } from '../../common/meta.js';
 import { setActiveNav } from '../../common/navigation.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
 import { fetchProfile } from '../profile/profile.js';
+import { getRelays, normalizeRelayUrl } from '../relays/relays.js';
 
 interface LoadEventPageOptions {
   eventRef: string;
@@ -32,6 +35,34 @@ interface LoadEventPageOptions {
   stopBackgroundFetch: () => void;
   clearNotification: () => void;
   isRouteActive?: () => boolean;
+}
+
+function normalizeRelayList(relays: string[]): string[] {
+  const seen = new Set<string>();
+  const normalizedRelays: string[] = [];
+  for (const relayUrl of relays) {
+    const normalizedRelay: string | null = normalizeRelayUrl(relayUrl);
+    if (!normalizedRelay || seen.has(normalizedRelay)) {
+      continue;
+    }
+    seen.add(normalizedRelay);
+    normalizedRelays.push(normalizedRelay);
+  }
+  return normalizedRelays;
+}
+
+function resolveAllowedRelays(
+  relayHints: string[],
+  userRelays: string[],
+): string[] {
+  const normalizedUserRelays: string[] = normalizeRelayList(userRelays);
+  if (relayHints.length === 0) {
+    return normalizedUserRelays;
+  }
+  const userRelaySet: Set<string> = new Set(normalizedUserRelays);
+  return normalizeRelayList(relayHints).filter((relayUrl: string): boolean =>
+    userRelaySet.has(relayUrl),
+  );
 }
 
 export async function loadEventPage(
@@ -82,7 +113,11 @@ export async function loadEventPage(
     if (decoded.type === 'nevent') {
       const data: any = decoded.data;
       eventId = data?.id || (typeof data === 'string' ? data : undefined);
-      relayHints = Array.isArray(data?.relays) ? data.relays : [];
+      relayHints = Array.isArray(data?.relays)
+        ? data.relays.filter(
+            (value: unknown): value is string => typeof value === 'string',
+          )
+        : [];
     } else if (decoded.type === 'note') {
       eventId = typeof decoded.data === 'string' ? decoded.data : undefined;
     } else {
@@ -92,8 +127,18 @@ export async function loadEventPage(
       throw new Error('Missing event id');
     }
 
-    const relaysToUse: string[] =
-      relayHints.length > 0 ? relayHints : options.relays;
+    const relaysToUse: string[] = resolveAllowedRelays(
+      relayHints,
+      options.relays,
+    );
+    if (relaysToUse.length === 0) {
+      if (!isRouteActive()) return;
+      if (options.output) {
+        options.output.innerHTML =
+          "<p class='text-gray-600'>Event relay hints are outside your trusted relay list.</p>";
+      }
+      return;
+    }
 
     // Try to load event from IndexedDB cache first
     let event: NostrEvent | null = await getCachedEvent(eventId);
@@ -139,6 +184,18 @@ export async function loadEventPage(
     );
     if (!isRouteActive()) return; // Guard before render
     renderEvent(event, cachedProfile, npubStr, event.pubkey, options.output);
+
+    // Insert ancestor section before the root card
+    const rootCard = options.output.querySelector(
+      `[data-event-id="${event.id}"]`,
+    ) as HTMLElement | null;
+    const ancestorSection = document.createElement('div');
+    ancestorSection.className = 'ancestor-chain mb-2';
+    if (rootCard) {
+      options.output.insertBefore(ancestorSection, rootCard);
+    } else {
+      options.output.prepend(ancestorSection);
+    }
 
     // Start loading reactions immediately in parallel (don't wait)
     const reactionsContainer: HTMLElement | null = options.output.querySelector(
@@ -193,10 +250,20 @@ export async function loadEventPage(
       return;
     }
 
-    // Wait for reactions and replies in parallel
+    // Wait for reactions, replies, and ancestors in parallel
     await Promise.all([
       reactionsPromise,
       renderReplyTree(event, relaysToUse, options.output, isRouteActive),
+      (async (): Promise<void> => {
+        const ancestors = await fetchAncestorChain(event, relaysToUse);
+        if (!isRouteActive()) return;
+        await renderAncestorChain(
+          ancestors,
+          ancestorSection,
+          relaysToUse,
+          isRouteActive,
+        );
+      })(),
     ]);
   } catch (error: unknown) {
     console.error('Failed to load nevent:', error);
@@ -207,22 +274,121 @@ export async function loadEventPage(
   }
 }
 
-function resolveReplyParentId(event: NostrEvent): string | null {
+interface ReplyParentRef {
+  id: string;
+  relayHints: string[];
+}
+
+function resolveReplyParent(event: NostrEvent): ReplyParentRef | null {
   const eTags: string[][] = event.tags.filter(
-    (tag: string[]): boolean => tag[0] === 'e',
+    (tag: string[]): boolean => tag[0] === 'e' && Boolean(tag[1]),
   );
   if (eTags.length === 0) {
     return null;
   }
 
   const replyTag: string[] | undefined = eTags.find(
-    (tag: string[]): boolean => tag[3] === 'reply',
+    (tag: string[]): boolean => getTagMarker(tag) === 'reply',
   );
   if (replyTag?.[1]) {
-    return replyTag[1];
+    return { id: replyTag[1], relayHints: replyTag[2] ? [replyTag[2]] : [] };
   }
 
-  return eTags[eTags.length - 1]?.[1] || null;
+  // Direct replies to a thread root use only a "root" marker (no "reply" tag).
+  const rootTag: string[] | undefined = eTags.find(
+    (tag: string[]): boolean => getTagMarker(tag) === 'root',
+  );
+  if (rootTag?.[1]) {
+    return { id: rootTag[1], relayHints: rootTag[2] ? [rootTag[2]] : [] };
+  }
+
+  const legacyParentTags: string[][] = eTags.filter(
+    (tag: string[]): boolean => getTagMarker(tag) === '',
+  );
+  const fallback: string[] | undefined =
+    legacyParentTags[legacyParentTags.length - 1];
+  if (fallback?.[1]) {
+    return { id: fallback[1], relayHints: fallback[2] ? [fallback[2]] : [] };
+  }
+
+  return null;
+}
+
+async function fetchAncestorChain(
+  rootEvent: NostrEvent,
+  relays: string[],
+  maxDepth: number = 10,
+): Promise<NostrEvent[]> {
+  const ancestors: NostrEvent[] = [];
+  let current = rootEvent;
+  const seen = new Set<string>([rootEvent.id]);
+
+  for (let i = 0; i < maxDepth; i++) {
+    const parentRef: ReplyParentRef | null = resolveReplyParent(current);
+    if (!parentRef || seen.has(parentRef.id)) break;
+    seen.add(parentRef.id);
+
+    // Merge e-tag relay hints with configured relays so parent events on
+    // hinted relays can be found even if not in the user's relay list.
+    const relaySet: Set<string> = new Set(relays);
+    const relaysToTry: string[] = [
+      ...relays,
+      ...parentRef.relayHints.filter(
+        (url: string): boolean => !relaySet.has(url),
+      ),
+    ];
+
+    let parent: NostrEvent | null = await getCachedEvent(parentRef.id);
+    if (!parent) {
+      parent = await fetchEventById(parentRef.id, relaysToTry);
+      if (parent) void setCachedEvent(parent);
+    }
+    if (!parent) break;
+
+    ancestors.unshift(parent);
+    current = parent;
+  }
+  return ancestors;
+}
+
+async function renderAncestorChain(
+  ancestors: NostrEvent[],
+  section: HTMLElement,
+  relays: string[],
+  isRouteActive: () => boolean,
+): Promise<void> {
+  if (ancestors.length === 0) return;
+
+  const profiles = new Map<PubkeyHex, NostrProfile | null>();
+  await Promise.allSettled(
+    [...new Set(ancestors.map((e) => e.pubkey as PubkeyHex))].map(
+      async (pubkey): Promise<void> => {
+        profiles.set(pubkey, await fetchProfile(pubkey, relays));
+      },
+    ),
+  );
+
+  if (!isRouteActive()) return;
+
+  for (const ancestor of ancestors) {
+    const profile = profiles.get(ancestor.pubkey as PubkeyHex) ?? null;
+    const npub = nip19.npubEncode(ancestor.pubkey) as Npub;
+
+    const temp = document.createElement('div');
+    renderEvent(ancestor, profile, npub, ancestor.pubkey as PubkeyHex, temp);
+    const card = temp.firstElementChild as HTMLElement | null;
+    if (!card) continue;
+
+    const badge = card.querySelector(
+      '.reply-badge-container',
+    ) as HTMLElement | null;
+    if (badge) badge.style.display = 'none';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'border-l-2 border-gray-200 pl-2';
+    wrapper.appendChild(card);
+    section.appendChild(wrapper);
+  }
 }
 
 async function renderReplyTree(
@@ -237,6 +403,10 @@ async function renderReplyTree(
   const replies: NostrEvent[] = await fetchRepliesForEvent(
     rootEvent.id,
     relays,
+  );
+  // Warm event cache so parent cards can resolve from local cache first.
+  void Promise.allSettled(
+    [rootEvent, ...replies].map((event: NostrEvent) => setCachedEvent(event)),
   );
   if (!isRouteActive()) return; // Guard before DOM update
   const section: HTMLDivElement = document.createElement('div');
@@ -317,11 +487,11 @@ async function renderReplyTree(
     renderEvent(event, profile, npub, event.pubkey as PubkeyHex, temp);
     const card: Element | null = temp.firstElementChild;
     if (card instanceof HTMLElement) {
-      const parentContainer: HTMLElement | null = card.querySelector(
-        '.parent-event-container',
+      const badgeContainer: HTMLElement | null = card.querySelector(
+        '.reply-badge-container',
       );
-      if (parentContainer) {
-        parentContainer.style.display = 'none';
+      if (badgeContainer) {
+        badgeContainer.style.display = 'none';
       }
       wrapper.appendChild(card);
     }

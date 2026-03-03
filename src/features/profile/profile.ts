@@ -137,6 +137,8 @@ interface FetchProfileOptions {
   forceRefresh?: boolean;
 }
 
+import { promiseAny, RelayMissError as RelayProfileMissError } from '../../common/promise-utils.js';
+
 const PROFILE_MEM_CACHE_TTL_MS: number = 5 * 60 * 1000;
 const PROFILE_RETRY_INTERVAL_MS: number = 30 * 1000;
 const profileMemoryCache: Map<
@@ -198,89 +200,100 @@ export async function fetchProfile(
 
   const request: Promise<NostrProfile | null> =
     (async (): Promise<NostrProfile | null> => {
-      for (const relayUrl of relays) {
-        try {
-          const profile: NostrProfile | null =
-            await new Promise<NostrProfile | null>((resolve) => {
-              let settled: boolean = false;
-              const socket: WebSocket = createRelayWebSocket(relayUrl);
+      const profileRequests: Promise<NostrProfile>[] = relays.map(
+        async (relayUrl: string): Promise<NostrProfile> => {
+          try {
+            const profile: NostrProfile | null =
+              await new Promise<NostrProfile | null>((resolve) => {
+                let settled: boolean = false;
+                const socket: WebSocket = createRelayWebSocket(relayUrl);
 
-              const finish = (value: NostrProfile | null): void => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timeout);
-                socket.close();
-                resolve(value);
-              };
+                const finish = (value: NostrProfile | null): void => {
+                  if (settled) return;
+                  settled = true;
+                  clearTimeout(timeout);
+                  socket.close();
+                  resolve(value);
+                };
 
-              const timeout = setTimeout((): void => {
-                recordRelayFailure(relayUrl);
-                finish(null);
-              }, 5000);
-
-              socket.onopen = (): void => {
-                const subId: string = `profile-${Math.random().toString(36).slice(2)}`;
-                const req: [
-                  string,
-                  string,
-                  { kinds: number[]; authors: string[]; limit: number },
-                ] = [
-                  'REQ',
-                  subId,
-                  { kinds: [0], authors: [pubkeyHex], limit: 1 },
-                ];
-                socket.send(JSON.stringify(req));
-              };
-
-              socket.onmessage = (msg: MessageEvent): void => {
-                const arr: any[] = JSON.parse(msg.data);
-                if (arr[0] === 'EVENT' && arr[2]?.kind === 0) {
-                  try {
-                    const parsed: NostrProfile = JSON.parse(arr[2].content);
-                    const emojiTags: string[][] = Array.isArray(arr[2].tags)
-                      ? arr[2].tags.filter(
-                          (tag: unknown): tag is string[] =>
-                            Array.isArray(tag) && tag[0] === 'emoji',
-                        )
-                      : [];
-                    parsed.emojiTags = emojiTags;
-                    finish(parsed);
-                    return;
-                  } catch (e) {
-                    console.warn('Failed to parse profile JSON', e);
-                  }
-                }
-
-                if (arr[0] === 'EOSE') {
+                const timeout = setTimeout((): void => {
+                  recordRelayFailure(relayUrl);
                   finish(null);
-                }
-              };
+                }, 5000);
 
-              socket.onerror = (err: Event): void => {
-                console.error(`WebSocket error [${relayUrl}]`, err);
-                finish(null);
-              };
-            });
+                socket.onopen = (): void => {
+                  const subId: string = `profile-${Math.random().toString(36).slice(2)}`;
+                  const req: [
+                    string,
+                    string,
+                    { kinds: number[]; authors: string[]; limit: number },
+                  ] = [
+                    'REQ',
+                    subId,
+                    { kinds: [0], authors: [pubkeyHex], limit: 1 },
+                  ];
+                  socket.send(JSON.stringify(req));
+                };
 
-          if (profile) {
-            if (persistProfile) {
-              setCachedProfile(pubkeyHex, profile);
+                socket.onmessage = (msg: MessageEvent): void => {
+                  const arr: any[] = JSON.parse(msg.data);
+                  if (arr[0] === 'EVENT' && arr[2]?.kind === 0) {
+                    try {
+                      const parsed: NostrProfile = JSON.parse(arr[2].content);
+                      const emojiTags: string[][] = Array.isArray(arr[2].tags)
+                        ? arr[2].tags.filter(
+                            (tag: unknown): tag is string[] =>
+                              Array.isArray(tag) && tag[0] === 'emoji',
+                          )
+                        : [];
+                      parsed.emojiTags = emojiTags;
+                      finish(parsed);
+                      return;
+                    } catch (e) {
+                      console.warn('Failed to parse profile JSON', e);
+                    }
+                  }
+
+                  if (arr[0] === 'EOSE') {
+                    finish(null);
+                  }
+                };
+
+                socket.onerror = (err: Event): void => {
+                  console.error(`WebSocket error [${relayUrl}]`, err);
+                  finish(null);
+                };
+              });
+
+            if (!profile) {
+              throw new RelayProfileMissError();
             }
-            await storeProfile(pubkeyHex, profile);
-            profileMemoryCache.set(pubkeyHex, {
-              profile,
-              expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS,
-            });
             return profile;
+          } catch (e) {
+            if (!(e instanceof RelayProfileMissError)) {
+              console.warn(`Failed to fetch profile from ${relayUrl}`, e);
+            }
+            throw e;
           }
-        } catch (e) {
-          console.warn(`Failed to fetch profile from ${relayUrl}`, e);
+        },
+      );
+
+      try {
+        const profile: NostrProfile = await promiseAny(profileRequests);
+        if (persistProfile) {
+          setCachedProfile(pubkeyHex, profile);
         }
+        await storeProfile(pubkeyHex, profile);
+        profileMemoryCache.set(pubkeyHex, {
+          profile,
+          expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS,
+        });
+        return profile;
+      } catch {
+        // All relays missed or failed. Do NOT cache null in profileMemoryCache —
+        // profileLastAttempt (30s throttle) prevents relay hammering, while
+        // avoiding a 5-minute stale null that would block parent/repost card fetches.
       }
-      profileMemoryCache.set(pubkeyHex, {
-        profile: null,
-        expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS,
-      });
       return null;
     })();
 

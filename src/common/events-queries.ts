@@ -1,8 +1,11 @@
+import { verifyEvent } from 'nostr-tools';
 import type { NostrEvent, PubkeyHex } from '../../types/nostr';
 import { recordRelayFailure } from '../features/relays/relays.js';
+import { promiseAny, RelayMissError } from './promise-utils.js';
 import { createRelayWebSocket } from './relay-socket.js';
 
 const deletionCache: Map<string, boolean> = new Map();
+const FOLLOW_LIST_MAX_FUTURE_SKEW_SECONDS: number = 5 * 60;
 
 export function getCachedDeletionStatus(eventId: string): boolean | undefined {
   return deletionCache.get(eventId);
@@ -49,7 +52,7 @@ export async function fetchFollowList(
             string,
             string,
             { kinds: number[]; authors: string[]; limit: number },
-          ] = ['REQ', subId, { kinds: [3], authors: [pubkeyHex], limit: 20 }];
+          ] = ['REQ', subId, { kinds: [3], authors: [pubkeyHex], limit: 50 }];
           console.log(`Requesting follows from ${relayUrl}`);
           socket.send(JSON.stringify(req));
         };
@@ -58,7 +61,35 @@ export async function fetchFollowList(
           const arr: any[] = JSON.parse(msg.data);
           if (arr[0] === 'EVENT' && arr[2]?.kind === 3) {
             const event: NostrEvent = arr[2];
-            if (event.created_at >= latestFollowTimestamp) {
+            if (event.pubkey !== pubkeyHex) {
+              return;
+            }
+
+            if (!verifyEvent(event)) {
+              console.warn(
+                `Ignoring invalid follow-list signature from ${relayUrl}`,
+              );
+              return;
+            }
+
+            const nowSeconds: number = Math.floor(Date.now() / 1000);
+            if (
+              event.created_at >
+              nowSeconds + FOLLOW_LIST_MAX_FUTURE_SKEW_SECONDS
+            ) {
+              console.warn(
+                `Ignoring future-skewed follow list from ${relayUrl}: ${event.created_at}`,
+              );
+              return;
+            }
+
+            const isNewerAndRicher: boolean =
+              event.created_at > latestFollowTimestamp &&
+              event.tags.length >= latestFollowTags.length;
+            const isSameSecondButRicher: boolean =
+              event.created_at === latestFollowTimestamp &&
+              event.tags.length > latestFollowTags.length;
+            if (isNewerAndRicher || isSameSecondButRicher) {
               latestFollowTimestamp = event.created_at;
               latestFollowTags = event.tags;
             }
@@ -165,21 +196,33 @@ export async function fetchEventById(
     return null;
   }
 
-  for (const relayUrl of relays) {
-    try {
-      const event: NostrEvent | null = await fetchEventFromRelay(
-        eventId,
-        relayUrl,
-        5000,
-      );
-      if (event) {
+  const requests: Promise<NostrEvent>[] = relays.map(
+    async (relayUrl: string): Promise<NostrEvent> => {
+      try {
+        const event: NostrEvent | null = await fetchEventFromRelay(
+          eventId,
+          relayUrl,
+          5000,
+        );
+        if (!event) {
+          throw new RelayMissError();
+        }
         return event;
+      } catch (e) {
+        if (!(e instanceof RelayMissError)) {
+          console.warn(`Failed to fetch event ${eventId} from ${relayUrl}:`, e);
+        }
+        throw e;
       }
-    } catch (e) {
-      console.warn(`Failed to fetch event ${eventId} from ${relayUrl}:`, e);
-    }
+    },
+  );
+
+  try {
+    return await promiseAny(requests);
+  } catch {
+    // All relays missed or failed (AggregateError-like case for Promise.any).
+    return null;
   }
-  return null;
 }
 
 export async function isEventDeleted(

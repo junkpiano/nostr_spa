@@ -254,9 +254,9 @@ export async function loadGlobalTimeline(
       if (!fetchingProfiles.has(event.pubkey)) {
         fetchingProfiles.add(event.pubkey);
         fetchProfile(event.pubkey, relays, {
-          usePersistentCache: false,
+          usePersistentCache: true,
           persistProfile: true,
-          forceRefresh: true,
+          forceRefresh: false,
         })
           .then((fetchedProfile: NostrProfile | null): void => {
             if (!routeIsActive()) return;
