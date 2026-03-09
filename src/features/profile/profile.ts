@@ -7,7 +7,7 @@ import type {
 } from '../../../types/nostr';
 import { storeProfile } from '../../common/db/index.js';
 import { isNip05Identifier, resolveNip05 } from '../../common/nip05.js';
-import { createRelayWebSocket } from '../../common/relay-socket.js';
+import { openRelaySubscription } from '../../common/relay-socket.js';
 import { openZapComposer } from '../../common/zap.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
 import { recordRelayFailure } from '../relays/relays.js';
@@ -226,6 +226,29 @@ async function cacheResolvedProfile(
   });
 }
 
+export function getAuthoritativeProfile(
+  pubkeyHex: PubkeyHex,
+  remoteProfile: NostrProfile | null,
+): NostrProfile | null {
+  const cachedMem:
+    | { profile: NostrProfile | null; expiresAt: number }
+    | undefined = profileMemoryCache.get(pubkeyHex);
+  if (cachedMem?.profile) {
+    return cachedMem.profile;
+  }
+
+  const cachedProfile: NostrProfile | null = getCachedProfile(pubkeyHex);
+  if (cachedProfile) {
+    profileMemoryCache.set(pubkeyHex, {
+      profile: cachedProfile,
+      expiresAt: Date.now() + PROFILE_MEM_CACHE_TTL_MS,
+    });
+    return cachedProfile;
+  }
+
+  return remoteProfile;
+}
+
 function getStoredPubkey(): PubkeyHex | null {
   const storedPubkey: string | null = localStorage.getItem('nostr_pubkey');
   return storedPubkey ? (storedPubkey as PubkeyHex) : null;
@@ -353,13 +376,13 @@ export async function fetchProfile(
             const profile: NostrProfile | null =
               await new Promise<NostrProfile | null>((resolve) => {
                 let settled: boolean = false;
-                const socket: WebSocket = createRelayWebSocket(relayUrl);
+                let unsubscribe: (() => void) | null = null;
 
                 const finish = (value: NostrProfile | null): void => {
                   if (settled) return;
                   settled = true;
                   clearTimeout(timeout);
-                  socket.close();
+                  unsubscribe?.();
                   resolve(value);
                 };
 
@@ -368,78 +391,53 @@ export async function fetchProfile(
                   finish(null);
                 }, 5000);
 
-                socket.onopen = (): void => {
-                  const subId: string = `profile-${Math.random().toString(36).slice(2)}`;
-                  const req: [
-                    string,
-                    string,
-                    { kinds: number[]; authors: string[]; limit: number },
-                  ] = [
-                    'REQ',
-                    subId,
-                    { kinds: [0], authors: [pubkeyHex], limit: 1 },
-                  ];
-                  socket.send(JSON.stringify(req));
-                };
-
-                socket.onmessage = (msg: MessageEvent): void => {
-                  const parsedMessage: unknown = JSON.parse(msg.data);
-                  if (!Array.isArray(parsedMessage)) {
-                    return;
-                  }
-
-                  const messageType: unknown = parsedMessage[0];
-                  const eventPayload: unknown = parsedMessage[2];
-                  const eventKind: unknown =
-                    typeof eventPayload === 'object' &&
-                    eventPayload !== null &&
-                    'kind' in eventPayload
-                      ? (eventPayload as { kind?: unknown }).kind
-                      : undefined;
-
-                  if (messageType === 'EVENT' && eventKind === 0) {
-                    try {
-                      const rawContent: unknown =
-                        typeof eventPayload === 'object' &&
-                        eventPayload !== null &&
-                        'content' in eventPayload
-                          ? (eventPayload as { content?: unknown }).content
-                          : undefined;
-                      const rawTags: unknown =
-                        typeof eventPayload === 'object' &&
-                        eventPayload !== null &&
-                        'tags' in eventPayload
-                          ? (eventPayload as { tags?: unknown }).tags
-                          : undefined;
-                      if (typeof rawContent !== 'string') {
-                        finish(null);
+                void openRelaySubscription(
+                  relayUrl,
+                  { kinds: [0], authors: [pubkeyHex], limit: 1 },
+                  {
+                    onEvent: (eventPayload: NostrEvent): void => {
+                      if (eventPayload.kind !== 0) {
                         return;
                       }
 
-                      const parsed: NostrProfile = JSON.parse(rawContent);
-                      const emojiTags: string[][] = Array.isArray(rawTags)
-                        ? rawTags.filter(
-                            (tag: unknown): tag is string[] =>
-                              Array.isArray(tag) && tag[0] === 'emoji',
-                          )
-                        : [];
-                      parsed.emojiTags = emojiTags;
-                      finish(parsed);
-                      return;
-                    } catch (e) {
-                      console.warn('Failed to parse profile JSON', e);
-                    }
-                  }
+                      try {
+                        if (typeof eventPayload.content !== 'string') {
+                          finish(null);
+                          return;
+                        }
 
-                  if (messageType === 'EOSE') {
+                        const parsed: NostrProfile = JSON.parse(
+                          eventPayload.content,
+                        );
+                        const emojiTags: string[][] = Array.isArray(
+                          eventPayload.tags,
+                        )
+                          ? eventPayload.tags.filter(
+                              (tag: unknown): tag is string[] =>
+                                Array.isArray(tag) && tag[0] === 'emoji',
+                            )
+                          : [];
+                        parsed.emojiTags = emojiTags;
+                        finish(parsed);
+                      } catch (e) {
+                        console.warn('Failed to parse profile JSON', e);
+                      }
+                    },
+                    onEose: (): void => {
+                      finish(null);
+                    },
+                    onClosed: (): void => {
+                      finish(null);
+                    },
+                  },
+                )
+                  .then((nextUnsubscribe: () => void): void => {
+                    unsubscribe = nextUnsubscribe;
+                  })
+                  .catch((err: unknown): void => {
+                    console.error(`WebSocket error [${relayUrl}]`, err);
                     finish(null);
-                  }
-                };
-
-                socket.onerror = (err: Event): void => {
-                  console.error(`WebSocket error [${relayUrl}]`, err);
-                  finish(null);
-                };
+                  });
               });
 
             if (!profile) {
@@ -481,21 +479,25 @@ export function renderProfile(
   profile: NostrProfile | null,
   profileSection: HTMLElement,
 ): void {
-  const avatar: string = getAvatarURL(pubkey, profile);
-  const rawName: string = getDisplayName(npub, profile);
-  const banner: string | undefined = profile?.banner;
-  const emojiTags: string[][] = profile?.emojiTags || [];
-  const nip05: string | undefined = profile?.nip05?.trim();
+  const renderProfileData: NostrProfile | null = getAuthoritativeProfile(
+    pubkey,
+    profile,
+  );
+  const avatar: string = getAvatarURL(pubkey, renderProfileData);
+  const rawName: string = getDisplayName(npub, renderProfileData);
+  const banner: string | undefined = renderProfileData?.banner;
+  const emojiTags: string[][] = renderProfileData?.emojiTags || [];
+  const nip05: string | undefined = renderProfileData?.nip05?.trim();
   const hasNip05: boolean = !!nip05 && isNip05Identifier(nip05);
-  const websiteUrl: string | null = normalizeProfileWebsiteUrl(profile);
+  const websiteUrl: string | null = normalizeProfileWebsiteUrl(renderProfileData);
   const websiteLabel: string =
     websiteUrl?.replace(/^https?:\/\//i, '').replace(/\/$/, '') || '';
   const isEnergySavingMode: boolean =
     localStorage.getItem('energy_saving_mode') === 'true';
 
   const nameHtml: string = emojifyAndLinkify(rawName, emojiTags);
-  const bioHtml: string = profile?.about
-    ? emojifyAndLinkify(profile.about, emojiTags)
+  const bioHtml: string = renderProfileData?.about
+    ? emojifyAndLinkify(renderProfileData.about, emojiTags)
     : '';
 
   // Avatar HTML based on energy saving mode
@@ -563,6 +565,10 @@ export function setupProfileZapButton(
   profile: NostrProfile | null,
   profileSection: HTMLElement,
 ): void {
+  const renderProfileData: NostrProfile | null = getAuthoritativeProfile(
+    pubkey,
+    profile,
+  );
   const zapAction: HTMLElement | null = profileSection.querySelector(
     '#profile-zap-action',
   );
@@ -570,7 +576,8 @@ export function setupProfileZapButton(
     return;
   }
 
-  const zapIdentifier: string | undefined = profile?.lud16 || profile?.lud06;
+  const zapIdentifier: string | undefined =
+    renderProfileData?.lud16 || renderProfileData?.lud06;
   if (!zapIdentifier) {
     zapAction.innerHTML = '';
     return;
@@ -597,8 +604,8 @@ export function setupProfileZapButton(
     openZapComposer({
       targetType: 'profile',
       recipientPubkey: pubkey,
-      recipientName: getDisplayName(npub, profile),
-      recipientProfile: profile,
+      recipientName: getDisplayName(npub, renderProfileData),
+      recipientProfile: renderProfileData,
     });
   });
 }

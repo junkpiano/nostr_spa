@@ -74,7 +74,7 @@ src/
 │   ├── session.ts           # NIP-07 session & private key handling
 │   ├── navigation.ts        # Client-side routing helpers
 │   ├── overlays.ts          # Image gallery overlay
-│   ├── event-cache.ts       # In-memory event deduplication
+│   ├── event-cache.ts       # Compatibility wrapper over the main event cache
 │   ├── timeline-cache.ts    # Profile cache for timeline rendering
 │   ├── deletion-targets.ts  # Deleted event tracking
 │   ├── meta.ts              # Dynamic OG meta tags
@@ -165,6 +165,14 @@ Default relays are defined in `src/features/relays/relays.ts`.
 
 Pruning limits: 10,000 events max; 14-day TTL general, 30-day TTL home timeline.
 
+### Cache Source Of Truth
+
+- Use `nostr_cache_v2` as the single IndexedDB source of truth for cached app data.
+- Read from cache first. Only fetch from relays when the required cache entry is missing.
+- After fetching from relays, write the result back to the main cache and render from that cached shape.
+- Do not introduce parallel caches for the same entity type. Compatibility wrappers are acceptable only if they delegate to `nostr_cache_v2`.
+- When cached data and freshly fetched data both exist, treat the cached value as the authoritative render source for that code path unless the task explicitly changes cache invalidation behavior.
+
 ### URL Routing
 
 Client-side routing via History API (`pushState` / `popstate`):
@@ -219,6 +227,7 @@ import { renderEvent } from '../common/event-render.js';
 ### Coding Practices
 
 - When making changes, always ensure they are corrected to avoid any side effects (e.g. update all call sites when renaming a function)
+- Keep data flow consistent with the cache model: cache-first, remote-on-miss, then cache the remote result.
 
 ## Nostr Protocol Reference
 

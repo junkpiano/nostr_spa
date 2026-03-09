@@ -2,7 +2,7 @@ import { verifyEvent } from 'nostr-tools';
 import type { NostrEvent, PubkeyHex } from '../../types/nostr';
 import { recordRelayFailure } from '../features/relays/relays.js';
 import { promiseAny, RelayMissError } from './promise-utils.js';
-import { createRelayWebSocket } from './relay-socket.js';
+import { openRelaySubscription } from './relay-socket.js';
 
 const deletionCache: Map<string, boolean> = new Map();
 const FOLLOW_LIST_MAX_FUTURE_SKEW_SECONDS: number = 5 * 60;
@@ -30,14 +30,15 @@ export async function fetchFollowList(
 
   const promises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         let settled: boolean = false;
+        let unsubscribe: (() => void) | null = null;
+
         const finish = (): void => {
           if (settled) return;
           settled = true;
           clearTimeout(timeout);
-          socket.close();
+          unsubscribe?.();
           resolve();
         };
 
@@ -46,77 +47,75 @@ export async function fetchFollowList(
           finish();
         }, 5000);
 
-        socket.onopen = (): void => {
-          const subId: string = `follows-${Math.random().toString(36).slice(2)}`;
-          const req: [
-            string,
-            string,
-            { kinds: number[]; authors: string[]; limit: number },
-          ] = ['REQ', subId, { kinds: [3], authors: [pubkeyHex], limit: 50 }];
-          console.log(`Requesting follows from ${relayUrl}`);
-          socket.send(JSON.stringify(req));
-        };
+        console.log(`Requesting follows from ${relayUrl}`);
+        void openRelaySubscription(
+          relayUrl,
+          { kinds: [3], authors: [pubkeyHex], limit: 50 },
+          {
+            onEvent: (event: NostrEvent): void => {
+              if (event.kind !== 3 || event.pubkey !== pubkeyHex) {
+                return;
+              }
 
-        socket.onmessage = (msg: MessageEvent): void => {
-          const arr: any[] = JSON.parse(msg.data);
-          if (arr[0] === 'EVENT' && arr[2]?.kind === 3) {
-            const event: NostrEvent = arr[2];
-            if (event.pubkey !== pubkeyHex) {
-              return;
-            }
+              if (!verifyEvent(event)) {
+                console.warn(
+                  `Ignoring invalid follow-list signature from ${relayUrl}`,
+                );
+                return;
+              }
 
-            if (!verifyEvent(event)) {
-              console.warn(
-                `Ignoring invalid follow-list signature from ${relayUrl}`,
-              );
-              return;
-            }
+              const nowSeconds: number = Math.floor(Date.now() / 1000);
+              if (
+                event.created_at >
+                nowSeconds + FOLLOW_LIST_MAX_FUTURE_SKEW_SECONDS
+              ) {
+                console.warn(
+                  `Ignoring future-skewed follow list from ${relayUrl}: ${event.created_at}`,
+                );
+                return;
+              }
 
-            const nowSeconds: number = Math.floor(Date.now() / 1000);
-            if (
-              event.created_at >
-              nowSeconds + FOLLOW_LIST_MAX_FUTURE_SKEW_SECONDS
-            ) {
-              console.warn(
-                `Ignoring future-skewed follow list from ${relayUrl}: ${event.created_at}`,
-              );
-              return;
-            }
-
-            const isNewerAndRicher: boolean =
-              event.created_at > latestFollowTimestamp &&
-              event.tags.length >= latestFollowTags.length;
-            const isSameSecondButRicher: boolean =
-              event.created_at === latestFollowTimestamp &&
-              event.tags.length > latestFollowTags.length;
-            if (isNewerAndRicher || isSameSecondButRicher) {
-              latestFollowTimestamp = event.created_at;
-              latestFollowTags = event.tags;
-            }
-            relayResults.set(relayUrl, {
-              gotEvent: true,
-              tagCount: event.tags.length,
-              createdAt: event.created_at,
-            });
-            console.log(
-              `Got kind 3 event from ${relayUrl} with ${event.tags.length} tags at ${event.created_at}`,
-            );
-          } else if (arr[0] === 'EOSE') {
-            if (!relayResults.has(relayUrl)) {
+              const isNewerAndRicher: boolean =
+                event.created_at > latestFollowTimestamp &&
+                event.tags.length >= latestFollowTags.length;
+              const isSameSecondButRicher: boolean =
+                event.created_at === latestFollowTimestamp &&
+                event.tags.length > latestFollowTags.length;
+              if (isNewerAndRicher || isSameSecondButRicher) {
+                latestFollowTimestamp = event.created_at;
+                latestFollowTags = event.tags;
+              }
               relayResults.set(relayUrl, {
-                gotEvent: false,
-                tagCount: 0,
-                createdAt: null,
+                gotEvent: true,
+                tagCount: event.tags.length,
+                createdAt: event.created_at,
               });
-            }
+              console.log(
+                `Got kind 3 event from ${relayUrl} with ${event.tags.length} tags at ${event.created_at}`,
+              );
+            },
+            onEose: (): void => {
+              if (!relayResults.has(relayUrl)) {
+                relayResults.set(relayUrl, {
+                  gotEvent: false,
+                  tagCount: 0,
+                  createdAt: null,
+                });
+              }
+              finish();
+            },
+            onClosed: (): void => {
+              finish();
+            },
+          },
+        )
+          .then((nextUnsubscribe: () => void): void => {
+            unsubscribe = nextUnsubscribe;
+          })
+          .catch((error: unknown): void => {
+            console.error(`WebSocket error [${relayUrl}]`, error);
             finish();
-          }
-        };
-
-        socket.onerror = (err: Event): void => {
-          console.error(`WebSocket error [${relayUrl}]`, err);
-          finish();
-        };
+          });
       });
     } catch (e) {
       console.warn(`Failed to fetch follows from ${relayUrl}:`, e);
@@ -146,13 +145,13 @@ async function fetchEventFromRelay(
 ): Promise<NostrEvent | null> {
   return await new Promise<NostrEvent | null>((resolve) => {
     let settled: boolean = false;
-    const socket: WebSocket = createRelayWebSocket(relayUrl);
+    let unsubscribe: (() => void) | null = null;
 
     const finish = (event: NostrEvent | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      socket.close();
+      unsubscribe?.();
       resolve(event);
     };
 
@@ -161,30 +160,27 @@ async function fetchEventFromRelay(
       finish(null);
     }, timeoutMs);
 
-    socket.onopen = (): void => {
-      const subId: string = `event-${Math.random().toString(36).slice(2)}`;
-      const req: [string, string, { ids: string[]; limit: number }] = [
-        'REQ',
-        subId,
-        { ids: [eventId], limit: 1 },
-      ];
-      socket.send(JSON.stringify(req));
-    };
-
-    socket.onmessage = (msg: MessageEvent): void => {
-      const arr: any[] = JSON.parse(msg.data);
-      if (arr[0] === 'EVENT' && arr[2]) {
-        finish(arr[2] as NostrEvent);
-        return;
-      }
-      if (arr[0] === 'EOSE') {
+    void openRelaySubscription(
+      relayUrl,
+      { ids: [eventId], limit: 1 },
+      {
+        onEvent: (event: NostrEvent): void => {
+          finish(event);
+        },
+        onEose: (): void => {
+          finish(null);
+        },
+        onClosed: (): void => {
+          finish(null);
+        },
+      },
+    )
+      .then((nextUnsubscribe: () => void): void => {
+        unsubscribe = nextUnsubscribe;
+      })
+      .catch((): void => {
         finish(null);
-      }
-    };
-
-    socket.onerror = (): void => {
-      finish(null);
-    };
+      });
   });
 }
 
@@ -242,13 +238,13 @@ export async function isEventDeleted(
       try {
         return await new Promise<boolean>((resolve) => {
           let settled: boolean = false;
-          const socket: WebSocket = createRelayWebSocket(relayUrl);
+          let unsubscribe: (() => void) | null = null;
 
           const finish = (value: boolean): void => {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            socket.close();
+            unsubscribe?.();
             resolve(value);
           };
 
@@ -257,50 +253,41 @@ export async function isEventDeleted(
             finish(false);
           }, perRelayTimeoutMs);
 
-          socket.onopen = (): void => {
-            const subId: string = `deleted-${Math.random().toString(36).slice(2)}`;
-            const req: [
-              string,
-              string,
-              {
-                kinds: number[];
-                authors: string[];
-                '#e': string[];
-                limit: number;
-              },
-            ] = [
-              'REQ',
-              subId,
-              {
-                kinds: [5],
-                authors: [authorPubkey],
-                '#e': [eventId],
-                limit: 20,
-              },
-            ];
-            socket.send(JSON.stringify(req));
-          };
-
-          socket.onmessage = (msg: MessageEvent): void => {
-            const arr: any[] = JSON.parse(msg.data);
-            if (arr[0] === 'EVENT' && arr[2]?.kind === 5) {
-              const deleteEvent: NostrEvent = arr[2];
+          void openRelaySubscription(
+            relayUrl,
+            {
+              kinds: [5],
+              authors: [authorPubkey],
+              '#e': [eventId],
+              limit: 20,
+            },
+            {
+              onEvent: (deleteEvent: NostrEvent): void => {
+                if (deleteEvent.kind !== 5) {
+                  return;
+                }
               const referencesTarget: boolean = deleteEvent.tags.some(
                 (tag: string[]): boolean =>
                   tag[0] === 'e' && tag[1] === eventId,
               );
               if (referencesTarget) {
                 finish(true);
-                return;
               }
-            } else if (arr[0] === 'EOSE') {
+              },
+              onEose: (): void => {
+                finish(false);
+              },
+              onClosed: (): void => {
+                finish(false);
+              },
+            },
+          )
+            .then((nextUnsubscribe: () => void): void => {
+              unsubscribe = nextUnsubscribe;
+            })
+            .catch((): void => {
               finish(false);
-            }
-          };
-
-          socket.onerror = (): void => {
-            finish(false);
-          };
+            });
         });
       } catch (e) {
         console.warn(`Failed to check delete event on ${relayUrl}:`, e);
@@ -363,14 +350,14 @@ export async function fetchRepliesForEvent(
 
   const promises = relays.map(async (relayUrl: string): Promise<void> => {
     try {
-      const socket: WebSocket = createRelayWebSocket(relayUrl);
       await new Promise<void>((resolve) => {
         let settled: boolean = false;
+        let unsubscribe: (() => void) | null = null;
         const finish = (): void => {
           if (settled) return;
           settled = true;
           clearTimeout(timeout);
-          socket.close();
+          unsubscribe?.();
           resolve();
         };
 
@@ -379,29 +366,27 @@ export async function fetchRepliesForEvent(
           finish();
         }, 5000);
 
-        socket.onopen = (): void => {
-          const subId: string = `replies-${Math.random().toString(36).slice(2)}`;
-          const req: [
-            string,
-            string,
-            { kinds: number[]; '#e': string[]; limit: number },
-          ] = ['REQ', subId, { kinds: [1], '#e': [eventId], limit: 200 }];
-          socket.send(JSON.stringify(req));
-        };
-
-        socket.onmessage = (msg: MessageEvent): void => {
-          const arr: any[] = JSON.parse(msg.data);
-          if (arr[0] === 'EVENT' && arr[2]) {
-            const event: NostrEvent = arr[2];
-            results.set(event.id, event);
-          } else if (arr[0] === 'EOSE') {
+        void openRelaySubscription(
+          relayUrl,
+          { kinds: [1], '#e': [eventId], limit: 200 },
+          {
+            onEvent: (event: NostrEvent): void => {
+              results.set(event.id, event);
+            },
+            onEose: (): void => {
+              finish();
+            },
+            onClosed: (): void => {
+              finish();
+            },
+          },
+        )
+          .then((nextUnsubscribe: () => void): void => {
+            unsubscribe = nextUnsubscribe;
+          })
+          .catch((): void => {
             finish();
-          }
-        };
-
-        socket.onerror = (): void => {
-          finish();
-        };
+          });
       });
     } catch (e) {
       console.warn(`Failed to fetch replies from ${relayUrl}:`, e);

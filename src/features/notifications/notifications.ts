@@ -7,7 +7,7 @@ import type {
 } from '../../../types/nostr';
 import { createRelayWebSocket } from '../../common/relay-socket.js';
 import { getDisplayName, replaceEmojiShortcodes } from '../../utils/utils.js';
-import { fetchProfile } from '../profile/profile.js';
+import { fetchProfile, getAuthoritativeProfile } from '../profile/profile.js';
 import { recordRelayFailure } from '../relays/relays.js';
 
 interface LoadNotificationsOptions {
@@ -300,8 +300,12 @@ async function loadDisplayNames(
     pubkeys.map(async (pubkey: PubkeyHex): Promise<void> => {
       try {
         const profile: NostrProfile | null = await fetchProfile(pubkey, relays);
+        const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+          pubkey,
+          profile,
+        );
         const npub: Npub = nip19.npubEncode(pubkey);
-        displayNames.set(pubkey, getDisplayName(npub, profile));
+        displayNames.set(pubkey, getDisplayName(npub, renderProfile));
       } catch (error: unknown) {
         console.warn(
           'Failed to load display name for notification author:',

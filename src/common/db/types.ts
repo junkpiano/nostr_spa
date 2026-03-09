@@ -6,7 +6,8 @@ import type {
 
 // Database configuration
 export const DB_NAME = 'nostr_cache_v2' as const;
-export const DB_VERSION = 1 as const;
+// Bump when store/index definitions change so existing browsers run migrations.
+export const DB_VERSION = 2 as const;
 
 // Store names
 export const STORE_NAMES = {

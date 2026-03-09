@@ -19,7 +19,10 @@ import {
 import { renderEvent } from './event-render.js';
 import { fetchingProfiles, profileCache } from './timeline-cache.js';
 import { getAvatarURL, getDisplayName } from '../utils/utils.js';
-import { fetchProfile } from '../features/profile/profile.js';
+import {
+  fetchProfile,
+  getAuthoritativeProfile,
+} from '../features/profile/profile.js';
 import { getCachedProfile as getPersistentCachedProfile } from '../features/profile/profile-cache.js';
 import { getRelays } from '../features/relays/relays.js';
 import { createBackwardReq, getRxNostr } from '../features/relays/rx-nostr-client.js';
@@ -121,6 +124,10 @@ function updateRenderedProfile(
   event: NostrEvent,
   fetchedProfile: NostrProfile,
 ): void {
+  const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+    event.pubkey as PubkeyHex,
+    fetchedProfile,
+  );
   const eventElements: NodeListOf<Element> =
     output.querySelectorAll('.event-container');
   eventElements.forEach((el: Element): void => {
@@ -129,13 +136,10 @@ function updateRenderedProfile(
       const avatarEl: Element | null = el.querySelector('.event-avatar');
       if (nameEl) {
         const npubStr: Npub = nip19.npubEncode(event.pubkey);
-        nameEl.textContent = `👤 ${getDisplayName(npubStr, fetchedProfile)}`;
+        nameEl.textContent = `👤 ${getDisplayName(npubStr, renderProfile)}`;
       }
       if (avatarEl) {
-        (avatarEl as HTMLImageElement).src = getAvatarURL(
-          event.pubkey,
-          fetchedProfile,
-        );
+        (avatarEl as HTMLImageElement).src = getAvatarURL(event.pubkey, renderProfile);
       }
     }
   });
@@ -192,7 +196,7 @@ function getLiveRenderProfile(
       });
   }
 
-  return profile;
+  return getAuthoritativeProfile(event.pubkey as PubkeyHex, profile);
 }
 
 function insertRenderedEventSorted(

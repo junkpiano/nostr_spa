@@ -6,7 +6,6 @@ import type {
   PubkeyHex,
 } from '../../../types/nostr';
 import {
-  getEvent as getCachedEvent,
   getProfile as getCachedProfile,
 } from '../../common/db/index.js';
 import {
@@ -14,7 +13,7 @@ import {
   loadReactionsForEvent,
   renderEvent,
 } from '../../common/event-render.js';
-import { setCachedEvent } from '../../common/event-cache.js';
+import { getCachedEvent, setCachedEvent } from '../../common/event-cache.js';
 import {
   fetchEventById,
   fetchRepliesForEvent,
@@ -23,7 +22,7 @@ import {
 import { setEventMeta } from '../../common/meta.js';
 import { setActiveNav } from '../../common/navigation.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
-import { fetchProfile } from '../profile/profile.js';
+import { fetchProfile, getAuthoritativeProfile } from '../profile/profile.js';
 import { getRelays, normalizeRelayUrl } from '../relays/relays.js';
 
 interface LoadEventPageOptions {
@@ -140,9 +139,8 @@ export async function loadEventPage(
       return;
     }
 
-    // Try to load event from IndexedDB cache first
+    // Cache-first: all event reads go through the main IndexedDB-backed cache.
     let event: NostrEvent | null = await getCachedEvent(eventId);
-    const _fromCache = !!event;
 
     // Only show loading spinner if not in cache
     if (!event && options.output) {
@@ -183,7 +181,13 @@ export async function loadEventPage(
       event.pubkey,
     );
     if (!isRouteActive()) return; // Guard before render
-    renderEvent(event, cachedProfile, npubStr, event.pubkey, options.output);
+    renderEvent(
+      event,
+      getAuthoritativeProfile(event.pubkey as PubkeyHex, cachedProfile),
+      npubStr,
+      event.pubkey,
+      options.output,
+    );
 
     // Insert ancestor section before the root card
     const rootCard = options.output.querySelector(
@@ -228,6 +232,10 @@ export async function loadEventPage(
 
     // Update profile if we got one from relays (whether cached or not)
     if (eventProfile) {
+      const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+        event.pubkey as PubkeyHex,
+        eventProfile,
+      );
       if (!isRouteActive()) return; // Guard before DOM update
       const eventCard: HTMLElement | null =
         options.output.querySelector('.event-container');
@@ -238,10 +246,10 @@ export async function loadEventPage(
         '.event-avatar',
       ) as HTMLImageElement | null;
       if (nameEl) {
-        nameEl.textContent = `👤 ${getDisplayName(npubStr, eventProfile)}`;
+        nameEl.textContent = `👤 ${getDisplayName(npubStr, renderProfile)}`;
       }
       if (avatarEl) {
-        const avatarUrl = getAvatarURL(event.pubkey, eventProfile);
+        const avatarUrl = getAvatarURL(event.pubkey, renderProfile);
         avatarEl.src = avatarUrl;
       }
     }
