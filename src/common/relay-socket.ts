@@ -21,6 +21,21 @@ interface AuthChallengeMessage {
   challenge: string;
 }
 
+interface SharedRelaySubscription {
+  onEvent?: ((event: NostrEvent) => void) | undefined;
+  onEose?: (() => void) | undefined;
+  onClosed?: ((reason: string) => void) | undefined;
+}
+
+interface SharedRelayConnection {
+  relayUrl: string;
+  socket: WebSocket | null;
+  openPromise: Promise<WebSocket> | null;
+  subscriptions: Map<string, SharedRelaySubscription>;
+}
+
+const sharedRelayConnections: Map<string, SharedRelayConnection> = new Map();
+
 interface WindowWithNostr extends Window {
   nostr?: {
     signEvent: (event: {
@@ -252,4 +267,184 @@ export function createRelayWebSocket(
     });
   }
   return socket;
+}
+
+function getSharedRelayConnection(relayUrl: string): SharedRelayConnection {
+  const normalizedRelayUrl: string = normalizeRelayUrl(relayUrl) || relayUrl;
+  const existing: SharedRelayConnection | undefined =
+    sharedRelayConnections.get(normalizedRelayUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const connection: SharedRelayConnection = {
+    relayUrl: normalizedRelayUrl,
+    socket: null,
+    openPromise: null,
+    subscriptions: new Map(),
+  };
+  sharedRelayConnections.set(normalizedRelayUrl, connection);
+  return connection;
+}
+
+function cleanupSharedSubscription(
+  connection: SharedRelayConnection,
+  subId: string,
+): void {
+  connection.subscriptions.delete(subId);
+  if (connection.socket?.readyState === WebSocket.OPEN) {
+    connection.socket.send(JSON.stringify(['CLOSE', subId]));
+  }
+}
+
+function attachSharedRelayListeners(connection: SharedRelayConnection): void {
+  const socket: WebSocket | null = connection.socket;
+  if (!socket) {
+    return;
+  }
+
+  const handledChallenges: Set<string> = new Set();
+
+  socket.addEventListener('message', (event: MessageEvent): void => {
+    if (typeof event.data !== 'string') {
+      return;
+    }
+
+    const authMessage: AuthChallengeMessage | null = parseAuthChallengeMessage(
+      event.data,
+    );
+    if (authMessage?.type === 'AUTH') {
+      if (handledChallenges.has(authMessage.challenge)) {
+        return;
+      }
+      handledChallenges.add(authMessage.challenge);
+      void handleRelayAuthChallenge(
+        socket,
+        connection.relayUrl,
+        authMessage.challenge,
+      );
+      return;
+    }
+
+    let parsedMessage: unknown;
+    try {
+      parsedMessage = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(parsedMessage)) {
+      return;
+    }
+
+    const type: unknown = parsedMessage[0];
+    const subId: unknown = parsedMessage[1];
+    if (typeof subId !== 'string') {
+      return;
+    }
+
+    const subscription: SharedRelaySubscription | undefined =
+      connection.subscriptions.get(subId);
+    if (!subscription) {
+      return;
+    }
+
+    if (type === 'EVENT' && parsedMessage[2]) {
+      subscription.onEvent?.(parsedMessage[2] as NostrEvent);
+      return;
+    }
+
+    if (type === 'EOSE') {
+      subscription.onEose?.();
+      return;
+    }
+
+    if (type === 'CLOSED') {
+      subscription.onClosed?.(
+        typeof parsedMessage[2] === 'string' ? parsedMessage[2] : '',
+      );
+      cleanupSharedSubscription(connection, subId);
+    }
+  });
+
+  socket.addEventListener('open', (): void => {
+    recordRelaySuccess(connection.relayUrl);
+  });
+
+  socket.addEventListener('error', (): void => {
+    recordRelayFailure(connection.relayUrl);
+  });
+
+  socket.addEventListener('close', (): void => {
+    connection.socket = null;
+    connection.openPromise = null;
+    connection.subscriptions.clear();
+  });
+}
+
+async function ensureSharedRelaySocket(
+  relayUrl: string,
+): Promise<SharedRelayConnection> {
+  const connection: SharedRelayConnection = getSharedRelayConnection(relayUrl);
+  const currentSocket: WebSocket | null = connection.socket;
+
+  if (currentSocket?.readyState === WebSocket.OPEN) {
+    return connection;
+  }
+
+  if (connection.openPromise) {
+    await connection.openPromise;
+    return connection;
+  }
+
+  connection.openPromise = new Promise<WebSocket>((resolve, reject) => {
+    const socket: WebSocket = new WebSocket(connection.relayUrl);
+    connection.socket = socket;
+    attachSharedRelayListeners(connection);
+
+    socket.addEventListener(
+      'open',
+      (): void => {
+        connection.openPromise = null;
+        resolve(socket);
+      },
+      { once: true },
+    );
+
+    socket.addEventListener(
+      'error',
+      (): void => {
+        connection.openPromise = null;
+        reject(new Error(`Failed to connect to relay ${connection.relayUrl}`));
+      },
+      { once: true },
+    );
+
+    socket.addEventListener(
+      'close',
+      (): void => {
+        connection.openPromise = null;
+      },
+      { once: true },
+    );
+  });
+
+  await connection.openPromise;
+  return connection;
+}
+
+export async function openRelaySubscription(
+  relayUrl: string,
+  filter: Record<string, unknown>,
+  subscription: SharedRelaySubscription,
+): Promise<() => void> {
+  const connection: SharedRelayConnection = await ensureSharedRelaySocket(
+    relayUrl,
+  );
+  const subId: string = `sub-${Math.random().toString(36).slice(2)}`;
+  connection.subscriptions.set(subId, subscription);
+  connection.socket?.send(JSON.stringify(['REQ', subId, filter]));
+
+  return (): void => {
+    cleanupSharedSubscription(connection, subId);
+  };
 }

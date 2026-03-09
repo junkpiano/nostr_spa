@@ -10,7 +10,7 @@ import { renderEvent } from '../../common/event-render.js';
 import { createRelayWebSocket } from '../../common/relay-socket.js';
 import { fetchingProfiles, profileCache } from '../../common/timeline-cache.js';
 import { getAvatarURL, getDisplayName } from '../../utils/utils.js';
-import { fetchProfile } from '../profile/profile.js';
+import { fetchProfile, getAuthoritativeProfile } from '../profile/profile.js';
 import { getCachedProfile as getPersistentCachedProfile } from '../profile/profile-cache.js';
 
 export interface SearchPageOptions {
@@ -79,6 +79,10 @@ function updateRenderedProfile(
   pubkey: PubkeyHex,
   profile: NostrProfile | null,
 ): void {
+  const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+    pubkey,
+    profile,
+  );
   const eventElements: NodeListOf<Element> =
     output.querySelectorAll('.event-container');
   eventElements.forEach((el: Element): void => {
@@ -87,13 +91,13 @@ function updateRenderedProfile(
     }
     const nameEl: Element | null = el.querySelector('.event-username');
     const avatarEl: Element | null = el.querySelector('.event-avatar');
-    if (profile) {
+    if (renderProfile) {
       if (nameEl) {
         const npubStr: Npub = nip19.npubEncode(pubkey);
-        nameEl.textContent = `👤 ${getDisplayName(npubStr, profile)}`;
+        nameEl.textContent = `👤 ${getDisplayName(npubStr, renderProfile)}`;
       }
       if (avatarEl) {
-        (avatarEl as HTMLImageElement).src = getAvatarURL(pubkey, profile);
+        (avatarEl as HTMLImageElement).src = getAvatarURL(pubkey, renderProfile);
       }
     }
   });

@@ -6,7 +6,10 @@ import type {
   OGPResponse,
   PubkeyHex,
 } from '../../types/nostr';
-import { fetchProfile } from '../features/profile/profile.js';
+import {
+  fetchProfile,
+  getAuthoritativeProfile,
+} from '../features/profile/profile.js';
 import { getRelays, normalizeRelayUrl } from '../features/relays/relays.js';
 import {
   fetchOGP,
@@ -94,6 +97,27 @@ function normalizeHttpUrl(url: string): string | null {
       return null;
     }
     return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAvatarUrl(url: string): string | null {
+  try {
+    const parsed: URL = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+    if (parsed.protocol === 'blob:') {
+      return url;
+    }
+    if (
+      parsed.protocol === 'data:' &&
+      url.trim().toLowerCase().startsWith('data:image/')
+    ) {
+      return url;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -781,10 +805,14 @@ async function loadReactionDetails(
         } catch (error: unknown) {
           console.warn('Failed to load profile for reaction:', error);
         }
+        const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+          event.pubkey as PubkeyHex,
+          profile,
+        );
 
         const npub: Npub = nip19.npubEncode(event.pubkey);
-        const name: string = getDisplayName(npub, profile);
-        const avatar: string = getAvatarURL(event.pubkey, profile);
+        const name: string = getDisplayName(npub, renderProfile);
+        const avatar: string = getAvatarURL(event.pubkey, renderProfile);
 
         const row: HTMLAnchorElement = document.createElement('a');
         row.className =
@@ -981,7 +1009,11 @@ function renderReplyBadge(
       (profile: NostrProfile | null): void => {
         const nameEl = container.querySelector('.reply-badge-username');
         if (nameEl) {
-          nameEl.textContent = `@${getDisplayName(parentNpub as Npub, profile)}`;
+          const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+            parentAuthorPubkey,
+            profile,
+          );
+          nameEl.textContent = `@${getDisplayName(parentNpub as Npub, renderProfile)}`;
         }
       },
     );
@@ -1002,12 +1034,16 @@ export function renderEvent(
   pubkey: PubkeyHex,
   output: HTMLElement,
 ): void {
+  const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+    pubkey,
+    profile,
+  );
   const isRepost: boolean = event.kind === 6 || event.kind === 16;
   const repostEventId: string | null = isRepost
     ? resolveRepostEventId(event)
     : null;
-  const avatar: string = getAvatarURL(pubkey, profile);
-  const name: string = getDisplayName(npub, profile);
+  const avatar: string = getAvatarURL(pubkey, renderProfile);
+  const name: string = getDisplayName(npub, renderProfile);
   const safeName: string = escapeHtmlAttribute(name);
   const safeNpub: string = escapeHtmlAttribute(npub);
   const createdAt: string = new Date(event.created_at * 1000).toLocaleString();
@@ -1024,7 +1060,9 @@ export function renderEvent(
     storedPubkey && storedPubkey === event.pubkey,
   );
   const isLoggedIn: boolean = Boolean(storedPubkey);
-  const canZapTarget: boolean = Boolean(profile?.lud16 || profile?.lud06);
+  const canZapTarget: boolean = Boolean(
+    renderProfile?.lud16 || renderProfile?.lud06,
+  );
   const actionBtnBase: string =
     'event-action-btn inline-flex items-center justify-center p-1 rounded transition-colors';
   const actionBtnDisabled: string = 'opacity-60 cursor-not-allowed';
@@ -1266,7 +1304,7 @@ export function renderEvent(
   }
   // Avatar display based on energy saving mode
   const safeAvatar: string =
-    normalizeHttpUrl(avatar) || 'https://placekitten.com/100/100';
+    normalizeAvatarUrl(avatar) || 'https://placekitten.com/100/100';
   const avatarHtml: string = isEnergySavingMode
     ? `<div class="w-12 h-12 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-xl">👤</div>`
     : `<img src="${escapeHtmlAttribute(safeAvatar)}" alt="Avatar" class="event-avatar w-12 h-12 rounded-full object-cover cursor-pointer"
@@ -1662,10 +1700,14 @@ async function enrichMentionDisplayNames(
         mentionedPubkey,
         relays,
       );
+      const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+        mentionedPubkey,
+        mentionedProfile,
+      );
       const mentionedNpub: Npub = nip19.npubEncode(mentionedPubkey);
       const displayName: string = getDisplayName(
         mentionedNpub,
-        mentionedProfile,
+        renderProfile,
       );
 
       // Handle both npub and nprofile mentions
@@ -1841,14 +1883,18 @@ async function renderReferencedEventCards(
         referencedEvent.pubkey,
         relaysToUse,
       );
+      const renderProfile: NostrProfile | null = getAuthoritativeProfile(
+        referencedEvent.pubkey as PubkeyHex,
+        referencedProfile,
+      );
       const referencedNpub: Npub = nip19.npubEncode(referencedEvent.pubkey);
       const referencedName: string = getDisplayName(
         referencedNpub,
-        referencedProfile,
+        renderProfile,
       );
       const referencedAvatar: string = getAvatarURL(
         referencedEvent.pubkey,
-        referencedProfile,
+        renderProfile,
       );
       const referencedContentWithUnicodeEmoji: string = replaceEmojiShortcodes(
         escapeHtmlAttribute(referencedEvent.content),
@@ -1870,7 +1916,7 @@ async function renderReferencedEventCards(
       const isEnergySavingMode: boolean =
         localStorage.getItem('energy_saving_mode') === 'true';
       const safeReferencedAvatar: string =
-        normalizeHttpUrl(referencedAvatar) || 'https://placekitten.com/80/80';
+        normalizeAvatarUrl(referencedAvatar) || 'https://placekitten.com/80/80';
       const referencedAvatarHtml: string = isEnergySavingMode
         ? `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 text-sm flex-shrink-0">👤</div>`
         : `<img
