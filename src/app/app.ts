@@ -1,4 +1,4 @@
-import type { PubkeyHex } from '../../types/nostr';
+import type { NostrEvent, PubkeyHex } from '../../types/nostr';
 import { setupComposeOverlay } from '../common/compose.js';
 import { getTimelineNewestTimestamp } from '../common/db/index.js';
 import { setupNavigation } from '../common/navigation.js';
@@ -16,11 +16,7 @@ import {
   startPeriodicSync,
 } from '../common/sync/service-worker-manager.js';
 import { setupZapOverlay } from '../common/zap.js';
-import { loadGlobalTimeline } from '../features/global/global-timeline.js';
-import { loadUserHomeTimeline } from '../features/home/home-loader.js';
-import { loadHomeTimeline } from '../features/home/home-timeline.js';
 import { clearNotifications } from '../features/notifications/notifications.js';
-import { publishEventToRelays } from '../features/profile/follow.js';
 import { recordRelayFailure } from '../features/relays/relays.js';
 import {
   configureRouteDependencies,
@@ -43,6 +39,34 @@ import {
   seenEventIds,
   syncRelays,
 } from './app-state.js';
+
+async function getGlobalTimelineModule(): Promise<
+  typeof import('../features/global/global-timeline.js')
+> {
+  return import('../features/global/global-timeline.js');
+}
+
+async function getHomeLoaderModule(): Promise<
+  typeof import('../features/home/home-loader.js')
+> {
+  return import('../features/home/home-loader.js');
+}
+
+async function getHomeTimelineModule(): Promise<
+  typeof import('../features/home/home-timeline.js')
+> {
+  return import('../features/home/home-timeline.js');
+}
+
+async function publishEventToRelays(
+  event: NostrEvent,
+  relayList: string[],
+): Promise<void> {
+  const { publishEventToRelays } = await import(
+    '../features/profile/follow-page.js'
+  );
+  await publishEventToRelays(event, relayList);
+}
 
 function showNewEventsNotification(_timelineType: string, count: number): void {
   // Remove existing notification if any
@@ -94,6 +118,7 @@ function showNewEventsNotification(_timelineType: string, count: number): void {
 
         const routeGuard: () => boolean = createRouteGuard();
         if (followedPubkeys.length > 0) {
+          const { loadHomeTimeline } = await getHomeTimelineModule();
           await loadHomeTimeline(
             followedPubkeys,
             homeKinds,
@@ -109,6 +134,7 @@ function showNewEventsNotification(_timelineType: string, count: number): void {
             storedPubkey as PubkeyHex,
           );
         } else {
+          const { loadUserHomeTimeline } = await getHomeLoaderModule();
           await loadUserHomeTimeline({
             pubkeyHex: storedPubkey as PubkeyHex,
             relays: appState.relays,
@@ -167,6 +193,7 @@ function showNewEventsNotification(_timelineType: string, count: number): void {
         appState.untilTimestamp = Math.floor(Date.now() / 1000);
 
         const routeGuard: () => boolean = createRouteGuard();
+        const { loadGlobalTimeline } = await getGlobalTimelineModule();
         await loadGlobalTimeline(
           appState.relays,
           limit,
@@ -339,6 +366,7 @@ function showNewPostsNotification(count: number): void {
           appState.cachedHomeTimeline?.followedPubkeys || [];
         if (followedPubkeys.length > 0 && output) {
           const isRouteActive = createRouteGuard();
+          const { loadHomeTimeline } = await getHomeTimelineModule();
           await loadHomeTimeline(
             followedPubkeys,
             homeKinds,

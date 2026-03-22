@@ -605,34 +605,6 @@ function normalizeRelayList(relays: string[]): string[] {
   return normalizedRelays;
 }
 
-function filterRelaysToUserList(
-  candidateRelays: string[],
-  userRelays: string[],
-): string[] {
-  const normalizedUserRelays: string[] = normalizeRelayList(userRelays);
-  if (candidateRelays.length === 0) {
-    return normalizedUserRelays;
-  }
-  const userRelaySet: Set<string> = new Set(normalizedUserRelays);
-  return normalizeRelayList(candidateRelays).filter(
-    (relayUrl: string): boolean => userRelaySet.has(relayUrl),
-  );
-}
-
-function mergeRelays(
-  primaryRelays: string[],
-  fallbackRelays: string[],
-): string[] {
-  const normalizedFallbackRelays: string[] = normalizeRelayList(fallbackRelays);
-  const allowedPrimaryRelays: string[] = filterRelaysToUserList(
-    primaryRelays,
-    normalizedFallbackRelays,
-  );
-  return Array.from(
-    new Set([...allowedPrimaryRelays, ...normalizedFallbackRelays]),
-  );
-}
-
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }

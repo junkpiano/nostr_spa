@@ -11,34 +11,12 @@ import {
   setSessionPrivateKeyFromRaw,
   updateLogoutButton,
 } from '../common/session.js';
-import { loadAboutPage } from '../features/about/about-page.js';
-import { broadcastRecentPosts } from '../features/broadcast/broadcast.js';
-import { loadEventPage } from '../features/event/event-page.js';
-import { loadGlobalTimeline } from '../features/global/global-timeline.js';
-import { loadUserHomeTimeline } from '../features/home/home-loader.js';
-import { loadHomeTimeline } from '../features/home/home-timeline.js';
-import { showInputForm } from '../features/home/welcome.js';
-import { loadNotificationsPage } from '../features/notifications/notifications.js';
-import {
-  publishEventToRelays,
-  setupFollowToggle,
-} from '../features/profile/follow.js';
-import {
-  fetchProfile,
-  renderProfile,
-  setupProfileEditor,
-  setupProfileZapButton,
-} from '../features/profile/profile.js';
-import { loadEvents } from '../features/profile/profile-events.js';
 import { loadReactionsPage } from '../features/reactions/reactions-page.js';
 import {
   getAllRelays,
   normalizeRelayUrl,
   setRelays,
 } from '../features/relays/relays.js';
-import { loadRelaysPage } from '../features/relays/relays-page.js';
-import { loadSearchPage } from '../features/search/search-page.js';
-import { loadSettingsPage } from '../features/settings/settings-page.js';
 import {
   appState,
   closeAllWebSockets,
@@ -76,6 +54,90 @@ function getRouteDependencies(): RouteDependencies {
     throw new Error('Route dependencies have not been configured.');
   }
   return routeDependencies;
+}
+
+async function getAboutPageModule(): Promise<
+  typeof import('../features/about/about-page.js')
+> {
+  return import('../features/about/about-page.js');
+}
+
+async function getBroadcastModule(): Promise<
+  typeof import('../features/broadcast/broadcast.js')
+> {
+  return import('../features/broadcast/broadcast.js');
+}
+
+async function getEventPageModule(): Promise<
+  typeof import('../features/event/event-page.js')
+> {
+  return import('../features/event/event-page.js');
+}
+
+async function getGlobalTimelineModule(): Promise<
+  typeof import('../features/global/global-timeline.js')
+> {
+  return import('../features/global/global-timeline.js');
+}
+
+async function getHomeLoaderModule(): Promise<
+  typeof import('../features/home/home-loader.js')
+> {
+  return import('../features/home/home-loader.js');
+}
+
+async function getHomeTimelineModule(): Promise<
+  typeof import('../features/home/home-timeline.js')
+> {
+  return import('../features/home/home-timeline.js');
+}
+
+async function getWelcomeModule(): Promise<
+  typeof import('../features/home/welcome.js')
+> {
+  return import('../features/home/welcome.js');
+}
+
+async function getNotificationsModule(): Promise<
+  typeof import('../features/notifications/notifications-page.js')
+> {
+  return import('../features/notifications/notifications-page.js');
+}
+
+async function getProfileFollowModule(): Promise<
+  typeof import('../features/profile/follow-page.js')
+> {
+  return import('../features/profile/follow-page.js');
+}
+
+async function getProfilePageModule(): Promise<
+  typeof import('../features/profile/profile-page.js')
+> {
+  return import('../features/profile/profile-page.js');
+}
+
+async function getProfileEventsModule(): Promise<
+  typeof import('../features/profile/profile-events.js')
+> {
+  return import('../features/profile/profile-events.js');
+}
+
+async function getRelaysPageModule(): Promise<
+  typeof import('../features/relays/relays-page.js')
+> {
+  return import('../features/relays/relays-page.js');
+}
+
+async function getSearchPageModule(): Promise<
+  typeof import('../features/search/search-page.js')
+> {
+  return import('../features/search/search-page.js');
+}
+
+async function getSettingsPageModule(): Promise<
+  typeof import('../features/settings/settings-page.js')
+> {
+  return import('../features/settings/settings-page.js');
 }
 
 function stopBackgroundFetch(): void {
@@ -161,18 +223,17 @@ export function handleRoute(scrollRestoreState?: unknown): void {
         output.innerHTML = '';
       }
 
-      await Promise.resolve(
-        loadSearchPage({
-          query: searchQuery,
-          relays: searchRelays,
-          limit: 100,
-          output,
-          connectingMsg,
-          activeWebSockets: appState.activeWebSockets,
-          activeTimeouts: appState.activeTimeouts,
-          isRouteActive,
-        }),
-      );
+      const { loadSearchPage } = await getSearchPageModule();
+      await loadSearchPage({
+        query: searchQuery,
+        relays: searchRelays,
+        limit: 100,
+        output,
+        connectingMsg,
+        activeWebSockets: appState.activeWebSockets,
+        activeTimeouts: appState.activeTimeouts,
+        isRouteActive,
+      });
     } else if (path === '/notifications') {
       const homeButton: HTMLElement | null =
         document.getElementById('nav-home');
@@ -198,13 +259,12 @@ export function handleRoute(scrollRestoreState?: unknown): void {
         notificationsButton.classList.remove('text-gray-700');
         notificationsButton.classList.add('bg-indigo-100', 'text-indigo-700');
       }
-      await Promise.resolve(
-        loadNotificationsPage({
-          relays: appState.relays,
-          limit: 50,
-          isRouteActive,
-        }),
-      );
+      const { loadNotificationsPage } = await getNotificationsModule();
+      await loadNotificationsPage({
+        relays: appState.relays,
+        limit: 50,
+        isRouteActive,
+      });
     } else if (path === '/reactions') {
       const homeButton: HTMLElement | null =
         document.getElementById('nav-home');
@@ -247,108 +307,105 @@ export function handleRoute(scrollRestoreState?: unknown): void {
         }),
       );
     } else if (path === '/relays') {
-      await Promise.resolve(
-        loadRelaysPage({
-          closeAllWebSockets,
-          stopBackgroundFetch,
-          clearNotification: clearNewPostsNotification,
-          setActiveNav,
-          getRelays: (): string[] => getAllRelays(),
-          setRelays: (list: string[]): void => {
-            setRelays(list);
-            syncRelays();
-          },
-          normalizeRelayUrl,
-          onRelaysChanged: syncRelays,
-          onBroadcastRequested: async (): Promise<void> => {
-            const statusEl: HTMLElement | null =
-              document.getElementById('broadcast-status');
-            const setStatus = (
-              message: string,
-              type: 'info' | 'error' | 'success' = 'info',
-            ): void => {
-              if (!statusEl) return;
-              statusEl.textContent = message;
-              if (type === 'error') {
-                statusEl.className = 'text-xs text-red-600';
-              } else if (type === 'success') {
-                statusEl.className = 'text-xs text-emerald-700';
-              } else {
-                statusEl.className = 'text-xs text-gray-600';
-              }
-            };
-
-            try {
-              setStatus('Preparing broadcast...');
-              const result = await broadcastRecentPosts({
-                relays: getAllRelays(),
-                limit: 50,
-                onProgress: ({ total, completed }): void => {
-                  setStatus(`Broadcasting ${completed}/${total} posts...`);
-                },
-              });
-              setStatus(
-                `Broadcasted ${result.completed} posts to ${result.relays} relays.`,
-                'success',
-              );
-
-              const storedPubkey: string | null =
-                localStorage.getItem('nostr_pubkey');
-              if (storedPubkey) {
-                await deleteTimeline('home', storedPubkey as PubkeyHex);
-              }
-              appState.cachedHomeTimeline = null;
-            } catch (error: unknown) {
-              const message: string =
-                error instanceof Error ? error.message : 'Broadcast failed.';
-              setStatus(message, 'error');
+      const { loadRelaysPage } = await getRelaysPageModule();
+      await loadRelaysPage({
+        closeAllWebSockets,
+        stopBackgroundFetch,
+        clearNotification: clearNewPostsNotification,
+        setActiveNav,
+        getRelays: (): string[] => getAllRelays(),
+        setRelays: (list: string[]): void => {
+          setRelays(list);
+          syncRelays();
+        },
+        normalizeRelayUrl,
+        onRelaysChanged: syncRelays,
+        onBroadcastRequested: async (): Promise<void> => {
+          const statusEl: HTMLElement | null =
+            document.getElementById('broadcast-status');
+          const setStatus = (
+            message: string,
+            type: 'info' | 'error' | 'success' = 'info',
+          ): void => {
+            if (!statusEl) return;
+            statusEl.textContent = message;
+            if (type === 'error') {
+              statusEl.className = 'text-xs text-red-600';
+            } else if (type === 'success') {
+              statusEl.className = 'text-xs text-emerald-700';
+            } else {
+              statusEl.className = 'text-xs text-gray-600';
             }
-          },
-          onNip65ImportRequested: importRelaysFromNip65,
-          onNip65PublishRequested: publishRelaysToNip65,
-          profileSection,
-          output,
-        }),
-      );
+          };
+
+          try {
+            const { broadcastRecentPosts } = await getBroadcastModule();
+            setStatus('Preparing broadcast...');
+            const result = await broadcastRecentPosts({
+              relays: getAllRelays(),
+              limit: 50,
+              onProgress: ({ total, completed }): void => {
+                setStatus(`Broadcasting ${completed}/${total} posts...`);
+              },
+            });
+            setStatus(
+              `Broadcasted ${result.completed} posts to ${result.relays} relays.`,
+              'success',
+            );
+
+            const storedPubkey: string | null =
+              localStorage.getItem('nostr_pubkey');
+            if (storedPubkey) {
+              await deleteTimeline('home', storedPubkey as PubkeyHex);
+            }
+            appState.cachedHomeTimeline = null;
+          } catch (error: unknown) {
+            const message: string =
+              error instanceof Error ? error.message : 'Broadcast failed.';
+            setStatus(message, 'error');
+          }
+        },
+        onNip65ImportRequested: importRelaysFromNip65,
+        onNip65PublishRequested: publishRelaysToNip65,
+        profileSection,
+        output,
+      });
     } else if (path === '/settings') {
-      await Promise.resolve(
-        loadSettingsPage({
-          closeAllWebSockets,
-          stopBackgroundFetch,
-          clearNotification: clearNewPostsNotification,
-          setActiveNav,
-          profileSection,
-          output,
-        }),
-      );
+      const { loadSettingsPage } = await getSettingsPageModule();
+      await loadSettingsPage({
+        closeAllWebSockets,
+        stopBackgroundFetch,
+        clearNotification: clearNewPostsNotification,
+        setActiveNav,
+        profileSection,
+        output,
+      });
     } else if (path === '/about') {
       resetNotificationsButtonState();
-      await Promise.resolve(
-        loadAboutPage({
-          closeAllWebSockets,
-          stopBackgroundFetch,
-          clearNotification: clearNewPostsNotification,
-          setActiveNav,
-          profileSection,
-          output,
-        }),
-      );
+      const { loadAboutPage } = await getAboutPageModule();
+      await loadAboutPage({
+        closeAllWebSockets,
+        stopBackgroundFetch,
+        clearNotification: clearNewPostsNotification,
+        setActiveNav,
+        profileSection,
+        output,
+      });
     } else {
       // Try to parse as npub profile
       const npub: string = path.replace('/', '').trim();
       if (npub.startsWith('nevent') || npub.startsWith('note')) {
-        await Promise.resolve(
-          loadEventPage({
-            eventRef: npub,
-            relays: appState.relays,
-            output,
-            profileSection,
-            closeAllWebSockets,
-            stopBackgroundFetch,
-            clearNotification: clearNewPostsNotification,
-            isRouteActive,
-          }),
-        );
+        const { loadEventPage } = await getEventPageModule();
+        await loadEventPage({
+          eventRef: npub,
+          relays: appState.relays,
+          output,
+          profileSection,
+          closeAllWebSockets,
+          stopBackgroundFetch,
+          clearNotification: clearNewPostsNotification,
+          isRouteActive,
+        });
       } else if (isNip05Identifier(npub)) {
         // NIP-05 identifier (e.g., user@domain.com)
         closeAllWebSockets();
@@ -542,6 +599,7 @@ export async function loadHomePage(
       appState.newestEventTimestamp = appState.untilTimestamp;
 
       if (output) {
+        const { loadHomeTimeline } = await getHomeTimelineModule();
         await loadHomeTimeline(
           appState.cachedHomeTimeline.followedPubkeys,
           homeKinds,
@@ -585,6 +643,7 @@ export async function loadHomePage(
       }
       seenEventIds.clear();
       appState.untilTimestamp = Math.floor(Date.now() / 1000);
+      const { loadUserHomeTimeline } = await getHomeLoaderModule();
       await loadUserHomeTimeline({
         pubkeyHex: storedPubkey as PubkeyHex,
         relays: appState.relays,
@@ -634,6 +693,7 @@ export async function loadHomePage(
     }
   } else {
     // User not logged in, show welcome screen
+    const { showInputForm } = await getWelcomeModule();
     showInputForm({
       output,
       profileSection,
@@ -724,6 +784,7 @@ export async function loadGlobalPage(
   }
 
   if (output) {
+    const { loadGlobalTimeline } = await getGlobalTimelineModule();
     await loadGlobalTimeline(
       appState.relays,
       limit,
@@ -805,6 +866,7 @@ async function startAppCore(
   }
 
   try {
+    const { fetchProfile } = await getProfilePageModule();
     appState.profile = await Promise.race([
       fetchProfile(pubkeyHex, appState.relays),
       new Promise<null>((resolve) => {
@@ -825,6 +887,8 @@ async function startAppCore(
     return;
   }
   if (profileSection) {
+    const [{ renderProfile, setupProfileEditor, setupProfileZapButton }, { publishEventToRelays }] =
+      await Promise.all([getProfilePageModule(), getProfileFollowModule()]);
     if (!isRouteActive()) return; // Guard before DOM update
     renderProfile(pubkeyHex, npub, appState.profile, profileSection);
     setupProfileZapButton(pubkeyHex, npub, appState.profile, profileSection);
@@ -838,6 +902,8 @@ async function startAppCore(
   }
 
   try {
+    const { setupFollowToggle, publishEventToRelays } =
+      await getProfileFollowModule();
     await setupFollowToggle(pubkeyHex, {
       getRelays: (): string[] => appState.relays,
       publishEvent: publishEventToRelays,
@@ -859,6 +925,7 @@ async function startAppCore(
 
   if (output) {
     try {
+      const { loadEvents } = await getProfileEventsModule();
       console.log('[App] Events loading started');
       await loadEvents(
         pubkeyHex,
